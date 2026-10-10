@@ -40,9 +40,12 @@ void sub_000F0BB0(void)
 
 extern void sub_000A6720(void);
 extern void sub_000CB2E0(void);
+extern void sub_00090FD0(void);
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
+    if (xbox_va == 0x00090FD0 || xbox_va == 0x00011244)
+        return (recomp_func_t)sub_00090FD0;
     if (xbox_va == 0x000A6720 || xbox_va == 0x0001379C)
         return (recomp_func_t)sub_000A6720;
     if (xbox_va == 0x000CB2E0 || xbox_va == 0x00015213)

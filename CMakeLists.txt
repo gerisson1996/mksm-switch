@@ -39,6 +39,7 @@ file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "${MKSM_GEN_DIR}/*.c")
 set(GAME_SOURCES
     src/main.c
     src/recomp_manual.c
+    src/sub_00090FD0.c
     src/sub_000A6720.c
     src/sub_000CB2E0.c
     src/sub_0030E2B0.c

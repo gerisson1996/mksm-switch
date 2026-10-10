@@ -303,6 +303,18 @@ static int game_main(void)
 #endif
 #if defined(__SWITCH__)
     setenv("RECOMP_QUIET", "1", 0);
+
+    /* MKSM GPU diagnostic build */
+    setenv("RECOMP_GL_TRACE", "1", 1);
+    setenv("RECOMP_VK_TRACE", "1", 1);
+    setenv("RECOMP_TRACE_FLIP", "0", 1);
+
+    /* MKSM geometry isolation test */
+    setenv("RECOMP_GL_DIRECT", "0", 1);
+    setenv("RECOMP_VK_INSTANCE", "0", 1);
+    fprintf(stderr, "[MKSM-DIAG] Geometry optimizations disabled\n");
+
+    fprintf(stderr, "[MKSM-DIAG] GPU tracing enabled\n");
 #endif
 
     game_dir = getenv("MKSM_GAME_DIR");

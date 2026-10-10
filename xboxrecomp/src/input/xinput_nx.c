@@ -249,6 +249,25 @@ int xbox_nx_pad_read(unsigned port, uint16_t *digital, uint8_t analog[8],
     analog[NX_XBOX_LT]    = (b & HidNpadButton_ZL) ? 255 : 0;
     analog[NX_XBOX_RT]    = (b & HidNpadButton_ZR) ? 255 : 0;
 
+    /* Mortal Kombat: Shaolin Monks shortcut:
+     * When user presses Plus, A, or B, force-skip video/intro playback (Sofdec)
+     * and trigger Start button to navigate straight to the main menu. */
+    if (b & (HidNpadButton_Plus | HidNpadButton_A | HidNpadButton_B)) {
+        extern ptrdiff_t g_xbox_mem_offset;
+        if (g_xbox_mem_offset) {
+            uint8_t *base = (uint8_t *)g_xbox_mem_offset;
+            volatile uint32_t *p_movie_active = (volatile uint32_t *)(base + 0x00639440u + 0x1f0u);
+            volatile uint32_t *p_movie_skip   = (volatile uint32_t *)(base + 0x0063962cu);
+            if (*p_movie_active == 1) {
+                *p_movie_skip = 1;
+            }
+        }
+        /* Also ensure Start (0x0010) is signaled if Plus is pressed, or if in intro/attract mode */
+        if (b & HidNpadButton_Plus) {
+            *digital |= 0x0010;
+        }
+    }
+
     if (b) {
         static u64 s_last_b[NX_PADS];
         if (b != s_last_b[port]) {
