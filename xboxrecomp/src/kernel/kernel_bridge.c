@@ -2088,28 +2088,31 @@ static int32_t kdisp_reset(uint32_t va)
 }
 
 /* ── KeSetEvent (ordinal 145) ────────────────────────────── */
+int xbox_bridge_KeSetEvent(uint32_t guest_va)
+{
+    if (kdisp_is_guest(guest_va)) {
+        return (int)kdisp_signal(guest_va, 0, 1);
+    }
+    HANDLE h = ke_shadow_lookup(guest_va);
+    if (!h)
+        h = bridge_resolve_handle(guest_va);
+    if (h)
+        return (int)SetEvent(h);
+    return 0;
+}
+
 static void bridge_KeSetEvent(void)
 {
     uint32_t guest_va = STACK_ARG(0);
     uint32_t increment = STACK_ARG(1);
     uint32_t wait = STACK_ARG(2);
-    HANDLE h;
 
     (void)increment;
     (void)wait;
 
-    if (kdisp_is_guest(guest_va)) {
-        g_eax = (uint32_t)kdisp_signal(guest_va, 0, 1);
-        return;
-    }
-    h = ke_shadow_lookup(guest_va);
-    if (!h)
-        h = bridge_resolve_handle(guest_va);
-    if (h)
-        g_eax = (uint32_t)SetEvent(h);
-    else
-        g_eax = 0;
+    g_eax = (uint32_t)xbox_bridge_KeSetEvent(guest_va);
 }
+
 
 /* ── KeWaitForSingleObject (ordinal 159) ─────────────────── */
 static void bridge_KeWaitForSingleObject(void)
@@ -2967,7 +2970,7 @@ uint32_t xbox_irq_lines(void);
 
 static void kernel_service_irqs(void)
 {
-    static unsigned logged;
+    static unsigned logged[32];
     uint32_t v, lines = xbox_irq_lines();
 
     for (v = 0; lines; v++, lines >>= 1) {
@@ -2975,8 +2978,8 @@ static void kernel_service_irqs(void)
         if (!(lines & 1))
             continue;
         claimed = kernel_raise_interrupt(v);
-        if (logged < 5) {
-            logged++;
+        if (v < 32 && logged[v] < 5) {
+            logged[v]++;
             fprintf(stderr, "  [KERNEL] irq %u -> ISR %s\n", v,
                     claimed < 0 ? "not connected" : claimed ? "claimed it" : "declined it");
             fflush(stderr);
@@ -4976,7 +4979,11 @@ static void bridge_MmLockUnlockBufferPages(void)
  */
 static void bridge_MmQueryAllocationSize(void)
 {
-    g_eax = xbox_HeapBlockSize(STACK_ARG(0));
+    uint32_t va = STACK_ARG(0);
+    uint32_t size = xbox_ContiguousBlockSize(va);
+    if (!size)
+        size = xbox_HeapBlockSize(va);
+    g_eax = size;
 }
 
 /* ── NtCreateMutant (ordinal 192, 3 args) */

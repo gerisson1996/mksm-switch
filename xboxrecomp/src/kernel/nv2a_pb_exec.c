@@ -104,20 +104,22 @@ static uint32_t dma_resolve(uint32_t offset)
 {
     extern int xbox_ContiguousIsPhysical(uint32_t phys);
 
-    /* Did this runtime hand the offset out as contiguous memory? Then the
-     * bytes live in the window, and that is not a guess: the arena is a bump
-     * allocator from XBOX_CONTIG_BASE, so everything below its high-water
-     * mark is memory some MmAllocateContiguousMemory call returned. The
-     * title's own writes go through the window, so the executor's must too.
-     *
-     * Checking this BEFORE the image test is the whole point. The image test
-     * only catches an offset that would land on the title's code, and whether
-     * it does is an accident of where the image happens to end: Half-Life 2's
-     * colour surface is physical 0x00A6C000, which clears the image by 700 KB.
-     * So it looked like an ordinary VA, and the executor cleared 1.2 MB of
-     * black straight through the guest heap -- which faulted the title three
-     * frames later on a pointer that had been overwritten, while the real
-     * framebuffer at 0x80A6C000 stayed untouched and the screen stayed black. */
+    /* If already in the contiguous window, it is a valid resolved pointer */
+    if (offset >= XBOX_CONTIG_BASE && offset < XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)
+        return offset;
+
+    /* High alias / mirror / caching bits (e.g. 0x40000000 WC, 0xF0000000 tiled):
+     * Xbox RAM is 64 MB (masked by 0x03FFFFFF). Mirrors (0x04000000..0x7FFFFFFF)
+     * all reference physical RAM. On hosts like Switch where memory aliasing
+     * is refused by the kernel, high mirror addresses have no host mapping and
+     * will fault unless resolved to their mapped backing (contiguous window or base RAM). */
+    if (offset >= 0x04000000u) {
+        uint32_t phys = offset & 0x03FFFFFFu;
+        if (xbox_ContiguousIsPhysical(phys))
+            return XBOX_CONTIG_BASE + phys;
+        return phys;
+    }
+
     if (xbox_ContiguousIsPhysical(offset))
         return XBOX_CONTIG_BASE + offset;
     /* Below the XBE base nothing is a surface or texture VA (page zero and
@@ -4095,11 +4097,15 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     if (subch == 0 && method == 0x0100 && param)
         s_vtx_epoch++;
     if (subch == 0 && method == 0x0100 && param) {
+        if (param == 5 || (param & 0x1Fu) == 5) {
+            extern int xbox_bridge_KeSetEvent(uint32_t guest_va);
+            xbox_bridge_KeSetEvent(0x003F29DCu);
+        }
         extern void xbox_set_irq_line(uint32_t vector, int level);
         extern void xbox_Nv2aHoldInterrupts(int on);
         volatile uint32_t *nv = (volatile uint32_t *)
             ((uint8_t *)xbox_GetMemoryOffset() + 0xFD000000u);
-        ULONGLONG give_up = GetTickCount64() + 2000;
+        ULONGLONG give_up = GetTickCount64() + 200; /* 200 ms timeout */
 
         if (InterlockedCompareExchange(&s_trap_hooked, 0, 0)) {
             trap_deliver_hooked(nv, method, subch, param);
@@ -4126,16 +4132,19 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
          * more than a moment). So wait as long as it takes, and only say so
          * when it is taking suspiciously long. */
         while (nv[0x400720 / 4] == 2) {
-            /* Level, like the hardware: asserted until taken. Re-asserting
-             * also closes the window where the ack thread read "not held" a
-             * moment before the hold went up and cleared the bits after. */
+            /* If PGRAPH interrupt is not enabled in PMC_INTR_EN_0, CPU will never service it */
+            if (!(nv[0x140 / 4] & 0x1000u)) {
+                fprintf(stderr, "  [PB] NOP(%u) trap dropped (PGRAPH interrupt masked: PMC_INTR %08X EN %08X)\n",
+                        param, nv[0x100 / 4], nv[0x140 / 4]);
+                break;
+            }
             nv[0x400100 / 4] |= 1;
             nv[0x000100 / 4] |= 0x1000;
             if (GetTickCount64() > give_up) {
-                fprintf(stderr, "  [PB] NOP(%u) trap still pending after 2 s "
+                fprintf(stderr, "  [PB] NOP(%u) trap timed out after 200ms "
                         "(PMC_INTR %08X EN %08X)\n", param, nv[0x100 / 4],
                         nv[0x140 / 4]);
-                give_up = GetTickCount64() + 2000;
+                break;
             }
             Sleep(0);
         }
@@ -4174,6 +4183,10 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
         nv[0x400720 / 4] = 1;
         xbox_set_irq_line(3, 0);
         xbox_Nv2aHoldInterrupts(0);
+        if (param == 5 || (param & 0x1Fu) == 5) {
+            extern int xbox_bridge_KeSetEvent(uint32_t guest_va);
+            xbox_bridge_KeSetEvent(0x003F29DCu);
+        }
         return;
     }
     if (subch != 0 && method == 0x0310) {

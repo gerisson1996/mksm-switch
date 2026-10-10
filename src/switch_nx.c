@@ -30,7 +30,8 @@
 
 #include "apu_xaudio2.h"
 
-#define NFSU2_SWITCH_DIR "sdmc:/switch/nfsu2x"
+#define MKSM_SWITCH_DIR "sdmc:/switch/mksm"
+#define NFSU2_SWITCH_DIR MKSM_SWITCH_DIR
 
 extern ptrdiff_t g_xbox_mem_offset;
 void print_guest_state(void);
@@ -350,8 +351,10 @@ static void *log_flusher(void *arg)
 
 static int log_open(void)
 {
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/mksm", 0777);
     s_log_buf = (char *)malloc(LOG_CAP);
-    s_log_fd = open(NFSU2_SWITCH_DIR "/nfsu2x_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    s_log_fd = open("sdmc:/switch/mksm/mksm_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (!s_log_buf || s_log_fd < 0 || AddDevice(&s_log_dev) < 0)
         return 0;
     if (!freopen("log:", "w", stdout))
@@ -369,7 +372,7 @@ static int log_open(void)
 
 static void load_env(void)
 {
-    FILE *f = fopen(NFSU2_SWITCH_DIR "/nfsu2x_env.txt", "r");
+    FILE *f = fopen("sdmc:/switch/mksm/mksm_env.txt", "r");
     char line[1024];
 
     if (!f)
@@ -734,9 +737,7 @@ static void *loader_main(void *arg)
 
 static void loader_start(void)
 {
-    if (getenv("NFSU2_LOADER") && strcmp(getenv("NFSU2_LOADER"), "0") == 0)
-        return;
-    s_loader_running = pthread_create(&s_loader_thread, NULL, loader_main, NULL) == 0;
+    s_loader_running = 0;
 }
 
 /* The renderer needs the display: stop drawing, give it the window. */

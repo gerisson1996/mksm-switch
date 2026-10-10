@@ -464,9 +464,24 @@ static int make_image(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags us
 
 /* ── Surfaces ─────────────────────────────────────────────────────── */
 
+static inline uint32_t nv2a_clean_va(uint32_t va)
+{
+    if (va >= 0x80000000u && va < 0x80000000u + 0x04000000u)
+        return va;
+    if (va >= 0x04000000u) {
+        uint32_t phys = va & 0x03FFFFFFu;
+        extern int xbox_ContiguousIsPhysical(uint32_t phys);
+        if (xbox_ContiguousIsPhysical(phys))
+            return 0x80000000u + phys;
+        return phys;
+    }
+    return va;
+}
+
 static VkSurf *surf_find(uint32_t va)
 {
     int i;
+    va = nv2a_clean_va(va);
     for (i = 0; i < VK_MAX_SURF; i++)
         if (s_surf[i].image && s_surf[i].va == va)
             return &s_surf[i];
@@ -484,6 +499,7 @@ static void clear_image_color(VkImage img, float r, float g, float b, float a)
 
 static VkSurf *surf_get(uint32_t va, uint32_t w, uint32_t h, uint32_t aa_sx, uint32_t aa_sy)
 {
+    va = nv2a_clean_va(va);
     VkSurf *s = surf_find(va), *victim = NULL;
     int i;
 
@@ -664,6 +680,7 @@ static int tex_size_from_format(uint32_t color)
 
 static uint32_t bytes_hash(uint32_t va, uint32_t bytes)
 {
+    va = nv2a_clean_va(va);
     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset() + va;
     uint32_t h = 2166136261u ^ bytes, step, i;
     if (!bytes)
@@ -700,6 +717,8 @@ static uint32_t swizzle_index(uint32_t u, uint32_t v, uint32_t w, uint32_t h)
 
 static int decode_indexed(uint32_t va, uint32_t w, uint32_t h, uint32_t *out)
 {
+    va = nv2a_clean_va(va);
+    s_palette_va = nv2a_clean_va(s_palette_va);
     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset();
     uint32_t entries = 256u >> ((s_palette_reg >> 2) & 3);
     const uint8_t *idx = mem + va;
@@ -794,6 +813,7 @@ static uint32_t cube_face_bytes(uint32_t color, uint32_t w, uint32_t h, uint32_t
 /* One 2D image (layer 0) or cube face from guest memory at va. */
 static void tex_fill(VkTex *t, uint32_t va, uint32_t layer)
 {
+    va = nv2a_clean_va(va);
     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset();
     uint32_t color = t->color, w = t->w, h = t->h, pitch = t->pitch;
     Nv2aTexture nt;
@@ -842,6 +862,7 @@ static void tex_fill(VkTex *t, uint32_t va, uint32_t layer)
 static VkImageView tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h, uint32_t pitch,
                            uint32_t face)
 {
+    va = nv2a_clean_va(va);
     VkTex *t = NULL, *victim = NULL;
     uint32_t i, hash;
     VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
@@ -1077,7 +1098,7 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2], VkDescriptor
     *sampled = NULL;
     if (!(control0 & 0x40000000u) || !regs[base])
         return;
-    va = s_batch->tex_va[i];
+    va = nv2a_clean_va(s_batch->tex_va[i]);
     if (tex_size_from_format(color)) {
         w = 1u << ((format >> 20) & 0xF);
         h = 1u << ((format >> 24) & 0xF);
@@ -1092,7 +1113,7 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2], VkDescriptor
     if (!w || !h || w > 4096 || h > 4096)
         return;
     s_palette_reg = regs[base + 8];
-    s_palette_va = s_batch->pal_va[i];
+    s_palette_va = nv2a_clean_va(s_batch->pal_va[i]);
     rt = cube ? NULL : surf_find(va);
     if (cube) {
         /* SET_TEXTURE_FORMAT bit 2: CUBEMAP_ENABLE; mip levels in [19:16]. */

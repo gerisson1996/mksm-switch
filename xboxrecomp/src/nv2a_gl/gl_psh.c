@@ -205,13 +205,15 @@ static void stage(Out *o, int i, const Nv2aPshKey *k)
 /* A final-combiner input: clamped to [0,1], optionally inverted. Its C0 and
  * C1 are its own (SPECULAR_FOG_FACTOR0/1), not a general stage's: read as
  * stage 0's, NFSU2's colour grading added its red channel mask to the whole
- * picture. */
+ * picture. A, B, C, D can read EF (reg 15), but E and F cannot. */
 static void final_input(Out *o, uint32_t b, int alpha_only, const Nv2aPshKey *k)
 {
     char nb[16];
-    const char *r = (b & 0xF) == 1 ? "u_fc0"
-                  : (b & 0xF) == 2 ? "u_fc1"
-                  : reg_name(b & 0xF, 0, k, nb, sizeof nb);
+    uint32_t reg = b & 0xF;
+    const char *r = (reg == 1) ? "u_fc0"
+                  : (reg == 2) ? "u_fc1"
+                  : reg_name(reg, 0, k, nb, sizeof nb);
+
     int use_alpha = (b >> 4) & 1;
     int invert = (b >> 5) & 1;
     char val[40];
@@ -219,6 +221,30 @@ static void final_input(Out *o, uint32_t b, int alpha_only, const Nv2aPshKey *k)
     if (alpha_only)
         snprintf(val, sizeof val, "%s.%s", r, use_alpha ? "a" : "b");
     else if (use_alpha)
+        snprintf(val, sizeof val, "vec3(%s.a)", r);
+    else
+        snprintf(val, sizeof val, "%s.rgb", r);
+    if (invert)
+        emit(o, "(1.0 - clamp(%s, 0.0, 1.0))", val);
+    else
+        emit(o, "clamp(%s, 0.0, 1.0)", val);
+}
+
+/* Inputs E and F can never reference the EF product (reg 15). */
+static void final_input_ef(Out *o, uint32_t b, const Nv2aPshKey *k)
+{
+    char nb[16];
+    uint32_t reg = b & 0xF;
+    const char *r = (reg == 1)  ? "u_fc0"
+                  : (reg == 2)  ? "u_fc1"
+                  : (reg == 15) ? "ZERO"
+                  : reg_name(reg, 0, k, nb, sizeof nb);
+
+    int use_alpha = (b >> 4) & 1;
+    int invert = (b >> 5) & 1;
+    char val[40];
+
+    if (use_alpha)
         snprintf(val, sizeof val, "vec3(%s.a)", r);
     else
         snprintf(val, sizeof val, "%s.rgb", r);
@@ -346,9 +372,9 @@ int nv2a_gl_psh(const Nv2aPshKey *k, char *buf, size_t cap)
         if (cw1 & 0x80)
             emit(&o, "    V1R0 = clamp(V1R0, 0.0, 1.0);\n");
         emit(&o, "    vec4 EF = vec4(");
-        final_input(&o, cw1 >> 24, 0, k);
+        final_input_ef(&o, cw1 >> 24, k);
         emit(&o, " * ");
-        final_input(&o, cw1 >> 16, 0, k);
+        final_input_ef(&o, cw1 >> 16, k);
         emit(&o, ", 0.0);\n");
         emit(&o, "    vec3 fA = "); final_input(&o, cw0 >> 24, 0, k); emit(&o, ";\n");
         emit(&o, "    vec3 fB = "); final_input(&o, cw0 >> 16, 0, k); emit(&o, ";\n");

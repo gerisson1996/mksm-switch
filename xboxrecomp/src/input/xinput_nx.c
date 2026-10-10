@@ -249,6 +249,22 @@ int xbox_nx_pad_read(unsigned port, uint16_t *digital, uint8_t analog[8],
     analog[NX_XBOX_LT]    = (b & HidNpadButton_ZL) ? 255 : 0;
     analog[NX_XBOX_RT]    = (b & HidNpadButton_ZR) ? 255 : 0;
 
+    if (b) {
+        static u64 s_last_b[NX_PADS];
+        if (b != s_last_b[port]) {
+            s_last_b[port] = b;
+            fprintf(stderr, "  [PAD%u] press b=0x%llX (Start/Plus=%d, A=%d, B=%d, X=%d, Y=%d)\n",
+                    port + 1, (unsigned long long)b,
+                    (b & HidNpadButton_Plus) != 0,
+                    (b & (s_positional ? HidNpadButton_B : HidNpadButton_A)) != 0,
+                    (b & (s_positional ? HidNpadButton_A : HidNpadButton_B)) != 0,
+                    (b & (s_positional ? HidNpadButton_Y : HidNpadButton_X)) != 0,
+                    (b & (s_positional ? HidNpadButton_X : HidNpadButton_Y)) != 0);
+            fflush(stderr);
+        }
+    }
+
+
     /* libnx sticks are +-32767 with +y up, the Xbox's convention too. */
     thumbs[0] = (int16_t)l.x;
     thumbs[1] = (int16_t)l.y;

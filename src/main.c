@@ -1,15 +1,15 @@
 /**
- * Need for Speed: Underground 2 (Xbox) - recompiled game entry point
+ * Mortal Kombat: Shaolin Monks (Xbox) - recompiled game entry point
  *
- * Boot order (same on every host):
+ * Boot order:
  *   crash reporter -> load default.xbe -> xbox_MemoryLayoutInit ->
  *   xbox_kernel_init -> xbox_path_init -> xbox_kernel_bridge_init ->
  *   g_esp = XBOX_STACK_TOP -> recomp_dispatch_init -> xbe_entry_point()
  *
- * Game data is the extracted disc (default.xbe, NFSUNDER/, B3/). Where it is
- * looked for:
- *   Windows/Linux: $NFSU2_GAME_DIR, else ./game
- *   Switch:        sdmc:/switch/nfsu2x/game
+ * Game data is the extracted disc (default.xbe, GAMEDATA.WAD..., etc.)
+ * Path:
+ *   Windows/Linux: $MKSM_GAME_DIR, else ./game
+ *   Switch:        sdmc:/switch/mksm/game
  */
 
 #ifdef _WIN32
@@ -27,7 +27,6 @@
 #include <xbox/xboxrecomp.h>
 
 #ifdef __SWITCH__
-/* libnx lives in switch_nx.c: <switch.h> and the Win32 vocabulary collide. */
 void switch_boot(void);
 void switch_shutdown(void);
 void switch_error_dialog(const char *msg, const char *details);
@@ -49,8 +48,8 @@ extern uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int 
 extern void mcpx_apu_mmio_write(MCPXAPUState *d, uint64_t addr, uint64_t val,
                                 unsigned int size);
 
-#define NFSU2_APU_BASE 0xFE800000u
-#define NFSU2_APU_END  0xFE880000u
+#define MKSM_APU_BASE 0xFE800000u
+#define MKSM_APU_END  0xFE880000u
 
 static uint32_t apu_mmio_rd(void *opaque, uint32_t off, unsigned size)
 {
@@ -66,24 +65,20 @@ extern void xbe_entry_point(void);
 extern int recomp_dispatch_init(void);
 extern void xbox_path_init(const char *game_dir, const char *save_dir);
 
-#define NFSU2_ENTRY_POINT 0x0021B1CEu
-
+#define MKSM_ENTRY_POINT 0x000F40CAu
 
 #if defined(__SWITCH__)
-#  define NFSU2_DEFAULT_GAME_DIR "sdmc:/switch/nfsu2x/game"
-#  define NFSU2_DEFAULT_SAVE_DIR "sdmc:/switch/nfsu2x/save"
+#  define MKSM_DEFAULT_GAME_DIR "sdmc:/switch/mksm/game"
+#  define MKSM_DEFAULT_SAVE_DIR "sdmc:/switch/mksm/save"
 #else
-#  define NFSU2_DEFAULT_GAME_DIR "game"
-#  define NFSU2_DEFAULT_SAVE_DIR NULL
+#  define MKSM_DEFAULT_GAME_DIR "game"
+#  define MKSM_DEFAULT_SAVE_DIR NULL
 #endif
 
 /* ------------------------------------------------------------------ */
 /* Crash reporting                                                     */
 /* ------------------------------------------------------------------ */
 
-/* What the guest was doing: its registers and the return addresses on its
- * stack. This is the useful half of any crash report -- the host PC names a
- * generated sub_XXXXXXXX at best, the guest stack names the whole chain. */
 void print_guest_state(void)
 {
     fprintf(stderr, "  guest: eax=%08X ecx=%08X edx=%08X ebx=%08X\n",
@@ -126,7 +121,6 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
         SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
         DWORD64 disp = 0;
 
-        /* The NV2A aperture belongs to the runtime's own handlers. */
         if (fault >= 0xFD000000 && fault < 0xFE000000)
             return EXCEPTION_CONTINUE_SEARCH;
 
@@ -154,7 +148,6 @@ static void install_crash_reporter(void)
     AddVectoredExceptionHandler(1, veh_handler);
 }
 #elif defined(__SWITCH__)
-/* The CPU exception handler is in switch_nx.c; it calls print_guest_state. */
 static void install_crash_reporter(void) {}
 #else
 #include <execinfo.h>
@@ -167,8 +160,6 @@ static void crash_signal(int sig, siginfo_t *si, void *uc)
             (uint32_t)((uintptr_t)si->si_addr - (uintptr_t)g_xbox_mem_offset));
     print_guest_state();
     {
-        /* The host frames name the lifted function (sub_XXXXXXXX) that
-         * faulted -- the guest stack alone does not on a worker thread. */
         void *frames[32];
         int n = backtrace(frames, 32);
         fprintf(stderr, "  host backtrace:\n");
@@ -200,8 +191,6 @@ static void install_crash_reporter(void)
 }
 #endif
 
-/* ------------------------------------------------------------------ */
-
 static void *load_file(const char *path, size_t *out_size)
 {
     FILE *f = fopen(path, "rb");
@@ -232,33 +221,29 @@ static void fatal(const char *msg)
 {
     fprintf(stderr, "[FATAL] %s\n", msg);
 #if defined(_WIN32)
-    MessageBoxA(NULL, msg, "NFSU2 recomp", MB_ICONERROR);
+    MessageBoxA(NULL, msg, "MK Shaolin Monks recomp", MB_ICONERROR);
 #elif defined(__SWITCH__)
     switch_error_dialog(msg, NULL);
 #else
-    SDL_ShowSimpleMessageBox(0x10, "NFSU2 recomp", msg, NULL);
+    SDL_ShowSimpleMessageBox(0x10, "MK Shaolin Monks recomp", msg, NULL);
 #endif
 }
 
 static int game_main(void);
-void xbox_guest_pin(int interrupt);   /* win32_compat.c: the Xbox's one CPU */
-void xbox_gil_enter(void);             /* kernel_bridge.c: the guest lock */
+void xbox_guest_pin(int interrupt);
+void xbox_gil_enter(void);
 void xbox_gil_leave(void);
 void xbox_gil_mark_main(void);
-void nfsu2_text_patch_init(void);    /* text_patch.c: Switch button names */
 
 #ifdef __SWITCH__
 #include <pthread.h>
-/* The first guest thread runs inline on whichever host thread boots the
- * title, and Horizon's main thread stack is small for recompiled code; boot
- * on a thread with a stack sized like a desktop main thread instead. */
-void xbox_nx_spread_thread(void);   /* win32_compat.c: off core 0, all cores allowed */
-void xbox_nx_track_thread(void *entry);   /* win32_compat.c: Switch [perf] report */
+void xbox_nx_spread_thread(void);
+void xbox_nx_track_thread(void *entry);
 
 static void *game_thread(void *arg)
 {
     xbox_nx_spread_thread();
-    xbox_nx_track_thread(NULL);          /* "game:" in the [perf] report */
+    xbox_nx_track_thread(NULL);
     *(int *)arg = game_main();
     return NULL;
 }
@@ -292,7 +277,7 @@ int main(int argc, char **argv)
 
 static int game_main(void)
 {
-    xbox_guest_pin(0);     /* the boot thread becomes the title's first thread */
+    xbox_guest_pin(0);
     char xbe_path[512];
     const char *game_dir;
     void *xbe_data;
@@ -301,15 +286,11 @@ static int game_main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    printf("=== Need for Speed: Underground 2 (Xbox) - static recompilation ===\n");
+    printf("=== Mortal Kombat: Shaolin Monks (Xbox) - static recompilation ===\n");
     install_crash_reporter();
-    if (getenv("NFSU2_EXIT_TRACE"))
+    if (getenv("MKSM_EXIT_TRACE"))
         atexit(print_guest_state);
 
-    /* Runtime defaults this title needs; an explicit setting still wins.
-     *   RECOMP_VBLANK      the linked D3D waits on its vblank ISR every frame
-     *   RECOMP_AC97_READY  DirectSound needs the codec present to create; "plain"
-     *                      is the variant that needs no fault handling */
 #ifdef _WIN32
     if (!getenv("RECOMP_VBLANK"))     _putenv("RECOMP_VBLANK=1");
     if (!getenv("RECOMP_AC97_READY")) _putenv("RECOMP_AC97_READY=plain");
@@ -317,32 +298,28 @@ static int game_main(void)
 #else
     setenv("RECOMP_VBLANK", "1", 0);
     setenv("RECOMP_AC97_READY", "plain", 0);
-    setenv("RECOMP_USB", "1", 0);       /* the pad is on the MCPX's OHCI */
-    setenv("RECOMP_PB_EXEC", "1", 0);   /* the title draws through NV2A */
+    setenv("RECOMP_USB", "1", 0);
+    setenv("RECOMP_PB_EXEC", "1", 0);
 #endif
 #if defined(__SWITCH__)
-    /* Every periodic log line flushes to the SD card; keep the log to what
-     * matters on a console. RECOMP_QUIET=0 in nfsu2x_env.txt brings it back. */
     setenv("RECOMP_QUIET", "1", 0);
 #endif
 
-    game_dir = getenv("NFSU2_GAME_DIR");
+    game_dir = getenv("MKSM_GAME_DIR");
     if (!game_dir || !game_dir[0])
-        game_dir = NFSU2_DEFAULT_GAME_DIR;
+        game_dir = MKSM_DEFAULT_GAME_DIR;
     snprintf(xbe_path, sizeof(xbe_path), "%s/default.xbe", game_dir);
 
     xbe_data = load_file(xbe_path, &xbe_size);
     if (!xbe_data) {
         fprintf(stderr, "cannot read %s\n", xbe_path);
-        fatal("Failed to load default.xbe. Put the extracted disc in the game "
-              "directory (or set NFSU2_GAME_DIR).");
+        fatal("Failed to load default.xbe. Put the extracted game files in the game directory.");
         return 1;
     }
     printf("XBE %s: %zu bytes\n", xbe_path, xbe_size);
 
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
-        fatal("Failed to initialise the Xbox memory layout "
-              "(the guest address range may be unavailable).");
+        fatal("Failed to initialise Xbox memory layout.");
         free(xbe_data);
         return 1;
     }
@@ -350,32 +327,9 @@ static int game_main(void)
     printf("Xbox memory mapped at host offset 0x%llX\n",
            (unsigned long long)g_xbox_mem_offset);
 
-    /* Game time per frame is capped: sub_001890C0 takes the real elapsed
-     * time but at most 3.0 (the .data float at 0x3A4C64, read nowhere else)
-     * x 1/60 s = 50 ms, and drops the rest. Below 20 fps the game ran slower
-     * than real time (races looked slow-motion on the Switch at 13-19 fps).
-     * NFSU2_SIM_STEPS sets the cap in 1/60 s units: default 6 = 100 ms, real
-     * speed down to 10 fps; 3 = the original. */
-    {
-        const char *e = getenv("NFSU2_SIM_STEPS");
-        float steps = e ? (float)atof(e) : 6.0f;
-        if (steps >= 1.0f && steps <= 30.0f) {
-            float *cap = (float *)((uint8_t *)xbox_GetMemoryBase() + 0x3A4C64);
-            if (*cap == 3.0f) {
-                *cap = steps;
-                printf("[BOOT] game time cap %.0f ms per frame\n", steps * 1000.0f / 60.0f);
-            }
-        }
-    }
-
-    /* The emulated APU. DirectSound's accesses reach it through the MMIO
-     * accessors the DSOUND section is lifted with (regen.sh passes
-     * --mmio-sections DSOUND), so the APU registers stay plain memory and no
-     * fault handling is needed -- the same on every host. NFSU2_APU=0 runs
-     * without it (DirectSound then creates, but nothing ever plays).
-     * Under RECOMP_AC97_READY=1 the runtime traps the APU instead (Windows). */
+    /* Emulated APU */
     if (getenv("RECOMP_AC97_READY")) {
-        const char *apu = getenv("NFSU2_APU");
+        const char *apu = getenv("MKSM_APU");
         int plain = strcmp(getenv("RECOMP_AC97_READY"), "plain") == 0;
 
         if (!plain || !apu || strcmp(apu, "0") != 0) {
@@ -383,31 +337,23 @@ static int game_main(void)
             fprintf(stderr, "[BOOT] emulated APU %s\n",
                     g_apu_state ? "up" : "FAILED to initialise");
             if (g_apu_state && plain)
-                xbox_MmioRegister(NFSU2_APU_BASE, NFSU2_APU_END,
+                xbox_MmioRegister(MKSM_APU_BASE, MKSM_APU_END,
                                   apu_mmio_rd, apu_mmio_wr, g_apu_state);
         }
     }
 
-    /* The USB host controllers the title's XPP library drives to find its
-     * gamepad (RECOMP_USB). On hosts without fault handling their registers
-     * are reached through the MMIO accessors the XPP section is lifted with. */
+    /* USB gamepad controllers */
     {
         extern void xbox_OhciInit(void);
         xbox_OhciInit();
     }
 
-    /* The NIC the title's XNET library drives (src/nic.c). */
-    {
-        extern void nfsu2_nic_init(void);
-        nfsu2_nic_init();
-    }
-
 #ifndef _WIN32
-    /* The GPU renderer (NFSU2_GL=0 falls back to the executor's CPU one). */
+    /* GPU renderer */
     {
-        const char *gl = getenv("NFSU2_GL");
+        const char *gl = getenv("MKSM_GL");
         if (!gl || strcmp(gl, "0") != 0) {
-#if defined(NFSU2_VULKAN)
+#if defined(MKSM_VULKAN)
             extern void nv2a_vk_install(void);
             nv2a_vk_install();
 #else
@@ -419,21 +365,22 @@ static int game_main(void)
 #endif
 
     xbox_kernel_init();
-    nfsu2_text_patch_init();
-    xbox_path_init(game_dir, NFSU2_DEFAULT_SAVE_DIR);
+    xbox_path_init(game_dir, MKSM_DEFAULT_SAVE_DIR);
     xbox_kernel_bridge_init();
 
     g_esp = XBOX_STACK_TOP;
 
     if (!recomp_dispatch_init())
-        fprintf(stderr, "[BOOT] flat dispatch unavailable; "
-                        "indirect calls will use the binary search\n");
+        fprintf(stderr, "[BOOT] flat dispatch unavailable; indirect calls will use binary search\n");
+
+    /* Mirror pushbuffer fence from device PUT (+0x2C) into GPU semaphore *(+0x30) */
+    xbox_Nv2aMirrorFence(0x003F0C08u, 0x2C, 0x30);
 
     xbox_WatchdogStart();
 
-    printf("Starting guest at 0x%08X (esp=0x%08X)\n", NFSU2_ENTRY_POINT, g_esp);
-    xbox_gil_mark_main();      /* the frame-rate thread (RECOMP_GIL_EAGER) */
-    xbox_gil_enter();          /* guest code from here on (kernel_bridge.c) */
+    printf("Starting MK:SM guest at 0x%08X (esp=0x%08X)\n", MKSM_ENTRY_POINT, g_esp);
+    xbox_gil_mark_main();
+    xbox_gil_enter();
     xbe_entry_point();
     xbox_gil_leave();
 

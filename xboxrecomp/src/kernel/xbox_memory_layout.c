@@ -709,6 +709,9 @@ static int fence_readable(uint32_t va, uint32_t bytes)
     if (va >= XBOX_CONTIG_BASE
             && (uint64_t)va + bytes <= (uint64_t)XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)
         return g_contig_memory != NULL;
+    if (va >= XBOX_NV2A_BASE
+            && (uint64_t)va + bytes <= (uint64_t)XBOX_NV2A_BASE + XBOX_NV2A_SIZE)
+        return g_nv2a_memory != NULL;
     return (size_t)va + bytes <= g_memory_size;
 }
 
@@ -911,6 +914,17 @@ static void fence_mirrors_tick(void)
                                        + g_memory_offset);
             if (*fence != put)
                 *fence = put;
+
+            static uint32_t s_last_registered_sem;
+            if (get_ptr && get_ptr != s_last_registered_sem) {
+                extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
+                nv2a_pb_set_semaphore_target(get_ptr);
+                s_last_registered_sem = get_ptr;
+            }
+
+            volatile uint32_t *patt = (volatile uint32_t *)
+                ((uint8_t *)g_memory_offset + 0xFD400B10u);
+            *patt = (put & 0x1Fu) << 2;
         }
     }
 }
@@ -1151,6 +1165,7 @@ static void spin_ack_flush(void)
 void recomp_spin_wake(void)
 {
     spin_ack_flush();
+    fence_mirrors_tick();
     if (!__atomic_load_n(&s_hw_sleepers, __ATOMIC_RELAXED))
         return;
     pthread_mutex_lock(&s_hw_lock);
@@ -1165,6 +1180,7 @@ void recomp_spin_wake(void)
         ((uint8_t *)xbox_GetMemoryOffset() + 0xFD000000u + 0x100410u);
     if (*pfb & 0x00010000u)
         *pfb &= ~0x00010000u;
+    fence_mirrors_tick();
 }
 #endif
 

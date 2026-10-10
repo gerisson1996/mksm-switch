@@ -51,6 +51,8 @@ LOG_PATTERNS = [
     # Unresolved indirect call, from the RECOMP_ICALL dispatch failure path.
     (re.compile(r"Failed to resolve VA (0x[0-9A-Fa-f]+)"),
      "Indirect-call target observed at runtime"),
+    (re.compile(r"Unresolved ICALL target: (0x[0-9A-Fa-f]+)"),
+     "Indirect-call target observed at runtime"),
     # PsCreateSystemThreadEx handed a routine with no dispatch entry. Nothing
     # in the image calls this address, so only a run can reveal it.
     (re.compile(r"start routine (0x[0-9A-Fa-f]+) not found in dispatch"),

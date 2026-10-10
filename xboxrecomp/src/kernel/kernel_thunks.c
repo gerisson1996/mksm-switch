@@ -437,7 +437,9 @@ void xbox_kernel_init(void)
     for (ULONG i = 0; i < XBOX_KERNEL_THUNK_TABLE_SIZE; i++) {
         ULONG ordinal;
 
-        if (thunk_base && i < thunk_count && xbox_GetMemoryBase()) {
+        if (thunk_base && xbox_GetMemoryBase()) {
+            if (i >= thunk_count)
+                break;
             uint32_t entry = *(volatile uint32_t *)
                 ((uintptr_t)(thunk_base + i * 4) + g_xbox_mem_offset);
             if (entry == 0) {

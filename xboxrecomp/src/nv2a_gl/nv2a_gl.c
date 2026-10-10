@@ -186,9 +186,24 @@ static int     s_drew_any;              /* the title has drawn something */
 
 static int s_watch_hit;
 
+static inline uint32_t nv2a_clean_va(uint32_t va)
+{
+    if (va >= 0x80000000u && va < 0x80000000u + 0x04000000u)
+        return va;
+    if (va >= 0x04000000u) {
+        uint32_t phys = va & 0x03FFFFFFu;
+        extern int xbox_ContiguousIsPhysical(uint32_t phys);
+        if (xbox_ContiguousIsPhysical(phys))
+            return 0x80000000u + phys;
+        return phys;
+    }
+    return va;
+}
+
 static GlSurf *surf_find(uint32_t va)
 {
     int i;
+    va = nv2a_clean_va(va);
     for (i = 0; i < GL_MAX_SURF; i++)
         if (s_surf[i].fbo && s_surf[i].va == va)
             return &s_surf[i];
@@ -198,6 +213,7 @@ static GlSurf *surf_find(uint32_t va)
 static GlSurf *surf_get(uint32_t va, uint32_t w, uint32_t h,
                         uint32_t aa_sx, uint32_t aa_sy)
 {
+    va = nv2a_clean_va(va);
     GlSurf *s = surf_find(va), *victim = NULL;
     int i;
 
@@ -234,6 +250,8 @@ static GlSurf *surf_get(uint32_t va, uint32_t w, uint32_t h,
         if (m * k > (double)s_max_size)
             k = (double)s_max_size / m;
         s->pw = (uint32_t)(w * k + 0.5); s->ph = (uint32_t)(h * k + 0.5);
+        if (s->pw > (uint32_t)s_max_size) s->pw = s_max_size;
+        if (s->ph > (uint32_t)s_max_size) s->ph = s_max_size;
         if (!s->pw) s->pw = 1;
         if (!s->ph) s->ph = 1;
     }
@@ -314,6 +332,8 @@ static GlSurf *surf_bind(const Nv2aSurface *sf, uint32_t zeta_va)
     int fresh = 0;
 
     if (w < sf->clip_x + sf->width) w = sf->clip_x + sf->width;
+    if (w > 2048) w = (sf->width && sf->width <= 2048) ? sf->width : 2048;
+    if (h > 2048) h = (sf->height && sf->height <= 2048) ? sf->height : 2048;
     if (!w || !h || !sf->color_va)
         return NULL;
     s = surf_get(sf->color_va, w, h, sf->aa_sx ? sf->aa_sx : 1,
@@ -407,6 +427,7 @@ static int tex_size_from_format(uint32_t color)
 
 static uint32_t bytes_hash(uint32_t va, uint32_t bytes)
 {
+    va = nv2a_clean_va(va);
     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset() + va;
     uint32_t h = 2166136261u ^ bytes, step, i;
 
@@ -816,9 +837,10 @@ static GLuint compile(GLenum type, const char *const *src, int n)
         glGetShaderInfoLog(sh, sizeof log, NULL, log);
         fprintf(stderr, "  [GL] %s shader failed:\n%s\n",
                 type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
-        if (s_trace)
-            for (i = 0; i < n; i++)
-                fprintf(stderr, "%s", src[i]);
+        fprintf(stderr, "--- Failed Shader Source ---\n");
+        for (i = 0; i < n; i++)
+            fprintf(stderr, "%s", src[i]);
+        fprintf(stderr, "\n--- End Shader Source ---\n");
         glDeleteShader(sh);
         return 0;
     }
@@ -1113,6 +1135,7 @@ static int ready(void)
         glGetIntegerv(0x0D33, &mt);                 /* GL_MAX_TEXTURE_SIZE */
         glGetIntegerv(0x84E8, &mr);                 /* GL_MAX_RENDERBUFFER_SIZE */
         s_max_size = mt > 0 && mr > 0 ? (mt < mr ? mt : mr) : 4096;
+        if (s_max_size > 2048) s_max_size = 2048;
         if (s_scale != 1.0)
             fprintf(stderr, "  [GL] rendering at %gx (RECOMP_GL_SCALE), surfaces up to %d\n",
                     s_scale, s_max_size);

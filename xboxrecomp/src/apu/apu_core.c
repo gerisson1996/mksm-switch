@@ -168,6 +168,10 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
         }
         qemu_cond_broadcast(&d->cond);
         break;
+    case NV_PAPU_IEN:
+        qatomic_set(&d->regs[addr], (uint32_t)val);
+        update_irq(d);
+        break;
     case NV_PAPU_FEMEMDATA:
         /* 'magic write' - value written to FEMEMADDR on notify completion */
         stl_le_phys(address_space_memory, d->regs[NV_PAPU_FEMEMADDR], (uint32_t)val);
@@ -422,7 +426,7 @@ static void throttle(MCPXAPUState *d)
      * itself after any stall longer than one frame, so every stall was lost
      * for good and the queue ran dry: 4-10 underruns a second, heard as
      * crackle. */
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__SWITCH__)
     if (xa2_is_active()) {
         int64_t t0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
         /* Let a guest register write in once per block even when behind and

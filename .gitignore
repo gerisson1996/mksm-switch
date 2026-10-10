@@ -63,3 +63,14 @@ gen/
 
 # Per-game toolkit output (disassembly of the retail XBE)
 xboxrecomp/tools/*/output/
+tools/disasm/output/
+
+# Switch build directories and local SDKs
+build-*/
+nvk_sdk/
+*.elf
+*.rlib
+*.log
+mksm_drive_log*.txt
+missing_syms.txt
+

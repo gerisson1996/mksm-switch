@@ -1,70 +1,70 @@
 [
  {
-  "start": "0x0021B15A",
-  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+  "start": "0x000CB2E0",
+  "note": "Game state machine init callback dispatched from ILT thunk 0x00015213."
  },
  {
-  "start": "0x00251E1F",
-  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+  "start": "0x00015213",
+  "note": "Incremental Link Table (ILT) thunk targeting 0x000CB2E0."
  },
  {
-  "start": "0x002740C7",
+  "start": "0x00012DF6",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
  },
  {
-  "start": "0x002B1A22",
-  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
- },
- {
-  "start": "0x00336920",
+  "start": "0x00013913",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
  },
  {
-  "start": "0x0033715E",
+  "start": "0x00013BFC",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
  },
  {
-  "start": "0x0025766D",
+  "start": "0x00015538",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
  },
  {
-  "start": "0x00274085",
+  "start": "0x00015F74",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
  },
  {
-  "start": "0x00274CA0",
-  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+  "start": "0x0048C258",
+  "note": "XInitDevices in XPP; non-standard frame lea ebp, [esp - 0x70]; sets up OHCI and gamepads."
  },
  {
-  "start": "0x0026E443",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x003FCB16",
+  "note": "DSOUND buffer initialization routine (ret 8)."
  },
  {
-  "start": "0x0026EB34",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0040075A",
+  "note": "DSOUND buffer header format setup (ret 12)."
  },
  {
-  "start": "0x00272948",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0040968D",
+  "note": "DSOUND deleting destructor routine (ret 4)."
  },
  {
-  "start": "0x00279240",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0048CEA9",
+  "note": "USB Hub registration callback."
  },
  {
-  "start": "0x00279245",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0048F618",
+  "note": "USB device connect / attach callback."
  },
  {
-  "start": "0x0033B527",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0048EBB3",
+  "note": "USB pad packet completion handler with analog deadzone filter."
  },
  {
-  "start": "0x0033AAD3",
-  "note": "Indirect-call target observed at runtime; decodes as a function body."
+  "start": "0x0048EC05",
+  "note": "USB pad packet completion handler raw copy."
  },
  {
-  "start": "0x000930D0",
-  "note": "Indirect-call target observed at runtime (thiscall method, after int3 padding; races call it every frame); decodes as a function body."
+  "start": "0x0048EFF9",
+  "note": "USB device disconnect callback."
+ },
+ {
+  "start": "0x0049394F",
+  "note": "USB device allocate callback."
  }
 ]

@@ -214,6 +214,15 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
         }
         break;
 
+    case 0x103: /* XC_FACTORY_AV_REGION: Standard NTSC-M */
+    case 0x104: /* XC_FACTORY_GAME_REGION: North America / Region 1 */
+        if (ValueLength >= sizeof(ULONG)) {
+            *(PULONG)Value = 1;
+            if (Type) *Type = 4;
+            if (ResultLength) *ResultLength = sizeof(ULONG);
+        }
+        break;
+
     default:
         xbox_log(XBOX_LOG_WARN, XBOX_LOG_XBOX,
             "ExQueryNonVolatileSetting: unhandled index 0x%02X", ValueIndex);
