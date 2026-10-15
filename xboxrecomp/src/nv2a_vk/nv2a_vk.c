@@ -62,12 +62,8 @@ extern ptrdiff_t xbox_GetMemoryOffset(void);
 
 static int s_state;            /* 0 untried, 1 ready, -1 failed */
 static int s_trace;
-/* RECOMP_VK_TRACE=<n>: trace n draws from boot, or after the requested flip
- * in RECOMP_VK_TRACE_AFTER_FRAME. */
+/* RECOMP_VK_TRACE=<n>: name every step of the first n draws */
 static int s_vtrace;
-static int s_vtrace_limit;
-static int s_vtrace_after_frame;
-static int s_vtrace_armed;
 #define VT(...) do { if (s_vtrace > 0) { fprintf(stderr, "  [VKT] " __VA_ARGS__); fflush(stderr); } } while (0)
 static uint32_t s_frame;
 /* RECOMP_TEX_CHANGES=1: log every cached texture whose guest bytes changed
@@ -1428,54 +1424,7 @@ static uint32_t prog_bucket(uint64_t vkey, const Nv2aPshKey *pk)
     return (uint32_t)(h ^ (h >> 32)) & (PROG_BUCKETS - 1);
 }
 
-/* Capture one complete input sample per vertex program during the bounded
- * draw trace. Skinned meshes need not source their position from attribute 0.
- * Keep this opt-in: constants and microcode are too verbose for normal logs. */
-static void trace_model_inputs(const Nv2aRawBatch *b)
-{
-    static int enabled = -1;
-    static uint64_t seen[32];
-    static unsigned count;
-    uint64_t key;
-    unsigned i, a, v;
-    if (enabled < 0) {
-        const char *e = getenv("RECOMP_VK_TRACE_MODELS");
-        enabled = e && atoi(e) != 0;
-    }
-    if (!enabled || s_vtrace <= 0 || b->xform != 2 ||
-        !b->vp_program || count == 32)
-        return;
-    key = prog_hash(b);
-    for (i = 0; i < count; i++)
-        if (seen[i] == key) return;
-    seen[count++] = key;
-    VT("model sample %u frame %u attrs %04X surface %08X zeta %08X\n",
-       count, s_frame + 1, b->attr_present, b->surface.color_va, b->zeta_va);
-    for (i = b->vp_start; i < b->vp_slots; i++) {
-        const uint32_t *p = b->vp_program[i];
-        VT("  vp[%u]=%08X %08X %08X %08X\n", i, p[0], p[1], p[2], p[3]);
-        if (p[3] & 1) break;
-    }
-    if (b->vp_consts)
-        for (i = 0; i < b->vp_const_count; i++) {
-            const float *c = b->vp_consts[i];
-            VT("  c[%u]=(%g %g %g %g)\n", i, c[0], c[1], c[2], c[3]);
-        }
-    for (a = 0; a < NV2A_RAW_ATTRS; a++) {
-        const float *c = b->attr_const[a];
-        VT("  constant v%u=(%g %g %g %g)\n", a, c[0], c[1], c[2], c[3]);
-        if (!b->attrs || !(b->attr_present & (1u << a)) ||
-            (b->attr_direct & (1u << a))) continue;
-        for (v = 0; v < b->vertex_count && v < 3; v++) {
-            const float *p = b->attrs + ((size_t)v * NV2A_RAW_ATTRS + a) * 4;
-            VT("  vertex %u v%u=(%g %g %g %g)\n", v, a, p[0], p[1], p[2], p[3]);
-        }
-    }
-    VT("  state alpha=%08X/%08X/%08X depth=%08X/%08X/%08X cull=%08X/%08X/%08X color=%08X\n",
-       b->regs[0x300/4], b->regs[0x33C/4], b->regs[0x340/4],
-       b->regs[0x30C/4], b->regs[0x354/4], b->regs[0x35C/4],
-       b->regs[0x308/4], b->regs[0x39C/4], b->regs[0x3A0/4], b->regs[0x358/4]);
-}
+
 
 static void pipes_forget_prog(int prog);
 
@@ -2010,16 +1959,6 @@ static int ready(void)
     {
         const char *e = getenv("RECOMP_VK_TRACE");
         s_vtrace = e ? atoi(e) : 0;
-        s_vtrace_limit = s_vtrace;
-        e = getenv("RECOMP_VK_TRACE_AFTER_FRAME");
-        s_vtrace_after_frame = e ? atoi(e) : 0;
-        if (s_vtrace_limit > 0 && s_vtrace_after_frame > 0) {
-            s_vtrace = 0;
-            fprintf(stderr, "  [VK] draw trace armed after flip frame %d (%d draws)\n",
-                    s_vtrace_after_frame, s_vtrace_limit);
-        } else {
-            s_vtrace_after_frame = 0;
-        }
     }
     nv2a_shader_vk = 1;
     glslang_initialize_process();
@@ -2940,35 +2879,12 @@ static void vk_draw_raw(const Nv2aRawBatch *b)
     pend_flush();
     if (!prim_indices(b, &idx, &n, &topo, &cls) || !n)
         return;
-    VT("draw frame %u: prim %u idx %u verts %u attrs %04X direct %04X xform %u"
-       " vp_start %u slots %u prog_gen %u const_gen %u surf %08X zeta %08X\n",
-       s_frame + 1, b->prim, n, b->vertex_count, b->attr_present, b->attr_direct,
-       b->xform, b->vp_start, b->vp_slots, b->vp_prog_gen, b->vp_const_gen,
-       b->surface.color_va, b->zeta_va);
-    if (b->xform == 2 && b->vp_consts && b->vp_const_count > 59) {
-        VT("  viewport c58=(%g %g %g %g) c59=(%g %g %g %g)\n",
-           b->vp_consts[58][0], b->vp_consts[58][1], b->vp_consts[58][2], b->vp_consts[58][3],
-           b->vp_consts[59][0], b->vp_consts[59][1], b->vp_consts[59][2], b->vp_consts[59][3]);
-    }
-    if (b->attrs && (b->attr_present & 1u) && !(b->attr_direct & 1u)) {
-        uint32_t v, count = b->vertex_count < 3 ? b->vertex_count : 3;
-        for (v = 0; v < count; v++) {
-            const float *p = b->attrs + (size_t)v * NV2A_RAW_ATTRS * 4;
-            VT("  attr0[%u]=(%g %g %g %g)\n", v, p[0], p[1], p[2], p[3]);
-        }
-    }
-    VT("  texture VAs: %08X/%08X %08X/%08X %08X/%08X %08X/%08X\n",
-       b->tex_va[0], b->pal_va[0], b->tex_va[1], b->pal_va[1],
-       b->tex_va[2], b->pal_va[2], b->tex_va[3], b->pal_va[3]);
-    trace_model_inputs(b);
+    VT("draw: prim %u idx %u verts %u attrs %04X direct %04X xform %u surf %08X zeta %08X\n",
+       b->prim, n, b->vertex_count, b->attr_present, b->attr_direct,
+       b->xform, b->surface.color_va, b->zeta_va);
     s = target(&b->surface, b->zeta_va, &d);
-    if (!s) {
-        VT("  skipped: unsupported target color=%08X zeta=%08X size=%ux%u pitch=%u\n",
-           b->surface.color_va, b->zeta_va, b->surface.width,
-           b->surface.height, b->surface.pitch);
-        if (s_vtrace > 0) s_vtrace--;
+    if (!s)
         return;
-    }
     s_drew_any = 1;
     psh_key(r, &pk);
     {
@@ -3299,13 +3215,7 @@ static void vk_flip(uint32_t completed_color_va)
     if (s && !s->image)
         s = NULL;
     s_frame++;
-    if (!s_vtrace_armed && s_vtrace_after_frame > 0 &&
-        s_frame >= (uint32_t)s_vtrace_after_frame) {
-        s_vtrace = s_vtrace_limit;
-        s_vtrace_armed = 1;
-        fprintf(stderr, "  [VK] tracing the next %d draws after flip frame %u\n",
-                s_vtrace_limit, s_frame);
-    }
+
     {
         static unsigned s_flip_diag_count = 0;
         if (s_flip_diag_count++ < 15 || (s_flip_diag_count % 300) == 0) {

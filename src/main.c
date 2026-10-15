@@ -295,19 +295,11 @@ static int game_main(void)
     if (!getenv("RECOMP_VBLANK"))      _putenv("RECOMP_VBLANK=1");
     if (!getenv("RECOMP_AC97_READY"))  _putenv("RECOMP_AC97_READY=plain");
     if (!getenv("RECOMP_USB"))         _putenv("RECOMP_USB=1");
-    if (!getenv("RECOMP_CULL"))        _putenv("RECOMP_CULL=0");
-    if (!getenv("RECOMP_INLINE_FFP"))  _putenv("RECOMP_INLINE_FFP=0");
-    if (!getenv("RECOMP_GL_DIRECT"))   _putenv("RECOMP_GL_DIRECT=0");
-    if (!getenv("RECOMP_VK_INSTANCE")) _putenv("RECOMP_VK_INSTANCE=0");
 #else
     setenv("RECOMP_VBLANK", "1", 0);
     setenv("RECOMP_AC97_READY", "plain", 0);
     setenv("RECOMP_USB", "1", 0);
     setenv("RECOMP_PB_EXEC", "1", 0);
-    if (!getenv("RECOMP_CULL"))        setenv("RECOMP_CULL", "0", 1);
-    if (!getenv("RECOMP_INLINE_FFP"))  setenv("RECOMP_INLINE_FFP", "0", 1);
-    if (!getenv("RECOMP_GL_DIRECT"))   setenv("RECOMP_GL_DIRECT", "0", 1);
-    if (!getenv("RECOMP_VK_INSTANCE")) setenv("RECOMP_VK_INSTANCE", "0", 1);
 #endif
 #if defined(__SWITCH__)
     setenv("RECOMP_QUIET", "1", 0);
