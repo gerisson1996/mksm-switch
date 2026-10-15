@@ -18,6 +18,10 @@ add_compile_definitions(
     NOMINMAX
 )
 
+if(NINTENDO_SWITCH)
+    add_compile_options(-O3 -mcpu=cortex-a57+fp+simd -mtune=cortex-a57 -fomit-frame-pointer -fno-math-errno)
+endif()
+
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/xboxrecomp" CACHE PATH
     "Path to the xboxrecomp toolkit root directory")
 
