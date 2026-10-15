@@ -76,7 +76,10 @@ if(WIN32)
     endif()
 else()
     if(NINTENDO_SWITCH)
-        set(MKSM_GEN_OPT "-O2" CACHE STRING "Optimisation for the lifted code")
+        set(MKSM_GEN_OPT "-O2 -mcpu=cortex-a57+fp+simd -mtune=cortex-a57 -fomit-frame-pointer -fno-math-errno" CACHE STRING "Optimisation for the lifted code")
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            -O3 -mcpu=cortex-a57+fp+simd -mtune=cortex-a57 -fomit-frame-pointer -fno-math-errno
+        )
     else()
         set(MKSM_GEN_OPT "-O1" CACHE STRING "Optimisation for the lifted code")
     endif()

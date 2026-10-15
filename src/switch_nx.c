@@ -936,16 +936,17 @@ static void prof_start(void)
  * them again every second while the game has focus. More heat and battery:
  * opt-in. sys-clk, when installed, may override them with its own profile. */
 static struct {
-    const char *env, *name;
+    const char *env, *alt_env, *name;
     PcvModule mod;
     PcvModuleId id;
     u32 cap_hz, want_hz, old_hz, set_hz;
+    u32 default_hz;
     int open;
     ClkrstSession s;
 } s_clk[3] = {
-    { "NFSU2_CPU_MHZ", "CPU", PcvModule_CpuBus, PcvModuleId_CpuBus, 1785000000u },
-    { "NFSU2_GPU_MHZ", "GPU", PcvModule_GPU,    PcvModuleId_GPU,    921600000u },
-    { "NFSU2_MEM_MHZ", "memory", PcvModule_EMC, PcvModuleId_EMC,    1600000000u },
+    { "MKSM_CPU_MHZ", "NFSU2_CPU_MHZ", "CPU", PcvModule_CpuBus, PcvModuleId_CpuBus, 1785000000u, 0, 0, 0, 1224000000u },
+    { "MKSM_GPU_MHZ", "NFSU2_GPU_MHZ", "GPU", PcvModule_GPU,    PcvModuleId_GPU,    921600000u,  0, 0, 0, 768000000u },
+    { "MKSM_MEM_MHZ", "NFSU2_MEM_MHZ", "memory", PcvModule_EMC, PcvModuleId_EMC,    1600000000u, 0, 0, 0, 1600000000u },
 };
 static int s_clk_rst = -1;                 /* 1 clkrst, 0 pcv, -1 not up */
 static volatile int s_clk_stop;
@@ -1028,8 +1029,12 @@ static void clk_apply(void)
     int i, any = 0;
     for (i = 0; i < 3; i++) {
         const char *e = getenv(s_clk[i].env);
+        if (!e) e = getenv(s_clk[i].alt_env);
         double mhz = e ? atof(e) : 0;
-        s_clk[i].want_hz = mhz > 0 ? (u32)(mhz * 1e6 + 0.5) : 0;
+        if (mhz > 0)
+            s_clk[i].want_hz = (u32)(mhz * 1e6 + 0.5);
+        else
+            s_clk[i].want_hz = s_clk[i].default_hz;
         if (s_clk[i].want_hz > s_clk[i].cap_hz)
             s_clk[i].want_hz = s_clk[i].cap_hz;
         any |= s_clk[i].want_hz != 0;
