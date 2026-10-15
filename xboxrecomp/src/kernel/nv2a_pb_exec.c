@@ -586,6 +586,8 @@ static void surface_apply_clip(void)
 #define NV097_SET_TRANSFORM_PROGRAM        0x0B00   /* 32 dwords */
 #define NV097_SET_TRANSFORM_CONSTANT       0x0B80   /* 32 dwords */
 #define NV097_SET_TRANSFORM_PROGRAM_LOAD   0x1E9C
+#define NV097_SET_TRANSFORM_DATA           0x1E80
+#define NV097_LAUNCH_TRANSFORM_PROGRAM     0x1E90
 #define NV097_SET_TRANSFORM_PROGRAM_START  0x1EA0
 #define NV097_SET_TRANSFORM_CONSTANT_LOAD  0x1EA4
 #define VP_SLOTS  136
@@ -594,6 +596,7 @@ static void surface_apply_clip(void)
 static struct {
     uint32_t prog[VP_SLOTS][4];
     float    c[VP_CONSTS][4];
+    float    state_v0[4];              /* SET_TRANSFORM_DATA, separate from vertex arrays */
     uint32_t prog_load, prog_start, const_load;
     int      off;                       /* RECOMP_VP=0 */
     uint32_t gen;                       /* per-batch cache stamp */
@@ -608,9 +611,16 @@ typedef struct { float pos[4], d0[4], t0[4]; int ok; } VpOut;
 static uint32_t s_vp_stamp[VP_CACHE];
 static VpOut    s_vp_cache[VP_CACHE];
 
+static void vp_launch(uint32_t start);
+
 static int vp_method(uint32_t method, uint32_t param)
 {
     uint32_t slot;
+
+    if (method >= NV097_SET_TRANSFORM_DATA && method < NV097_SET_TRANSFORM_DATA + 16) {
+        memcpy(&s_vp.state_v0[(method - NV097_SET_TRANSFORM_DATA) / 4], &param, 4);
+        return 1;
+    }
 
     if (method >= NV097_SET_TRANSFORM_PROGRAM && method < NV097_SET_TRANSFORM_PROGRAM + 0x80) {
         slot = (method - NV097_SET_TRANSFORM_PROGRAM) / 4;
@@ -633,6 +643,7 @@ static int vp_method(uint32_t method, uint32_t param)
         return 1;
     }
     switch (method) {
+    case NV097_LAUNCH_TRANSFORM_PROGRAM: vp_launch(param); return 1;
     case NV097_SET_TRANSFORM_PROGRAM_LOAD:  s_vp.prog_load = param;  return 1;
     case NV097_SET_TRANSFORM_PROGRAM_START: s_vp.prog_start = param; s_vp.gen++; s_vp.prog_gen++; return 1;
     case NV097_SET_TRANSFORM_CONSTANT_LOAD: s_vp.const_load = param; return 1;
@@ -701,7 +712,7 @@ static void vp_write(float *dst, uint32_t mask, const float val[4])
 
 static void vp_splat(float d[4], float x) { d[0] = d[1] = d[2] = d[3] = x; }
 
-static void vp_run(float v[16][4], VpOut *o)
+static void vp_run_at(float v[16][4], VpOut *o, uint32_t start)
 {
     float r[13][4], out[13][4];       /* r[12] is oPos */
     int a0 = 0;
@@ -711,7 +722,7 @@ static void vp_run(float v[16][4], VpOut *o)
     memset(out, 0, sizeof out);
     out[3][3] = out[9][3] = 1.0f;
 
-    for (pc = s_vp.prog_start; pc < VP_SLOTS; pc++) {
+    for (pc = start; pc < VP_SLOTS; pc++) {
         const uint32_t *t = s_vp.prog[pc];
         uint32_t mac = vpf(t, 1, 21, 4), ilu = vpf(t, 1, 25, 3);
         uint32_t omask = vpf(t, 3, 12, 4);
@@ -815,6 +826,31 @@ static void vp_run(float v[16][4], VpOut *o)
      * 3D scene the camera stands inside. Only w = 0 has no image. */
     o->ok = fabsf(o->pos[3]) > 1e-6f && isfinite(o->pos[0])
          && isfinite(o->pos[1]) && isfinite(o->pos[3]);
+}
+
+static void vp_run(float v[16][4], VpOut *o)
+{
+    vp_run_at(v, o, s_vp.prog_start);
+}
+
+/* State programs run once on LAUNCH, not once per drawn vertex. Their
+ * constant writes must reach later draws (including the Vulkan uniforms).
+ * MKSM uses this to prepare the matrices consumed by its skinned meshes.
+ * The launch slot does not change the normal vertex-program start slot. */
+static void vp_launch(uint32_t start)
+{
+    static unsigned logged;
+    float v[16][4] = {{0}};
+    VpOut ignored;
+    uint32_t before = s_vp.const_gen;
+    if (start >= VP_SLOTS)
+        return;
+    memcpy(v[0], s_vp.state_v0, sizeof v[0]);
+    vp_run_at(v, &ignored, start);
+    s_vp.gen++;                         /* invalidate CPU vertex/culling results */
+    if (logged++ < 8)
+        fprintf(stderr, "  [VP-STATE] launch slot=%u constant writes=%u\n",
+                start, s_vp.const_gen - before);
 }
 
 static const VpOut *vp_vertex(uint32_t index)
