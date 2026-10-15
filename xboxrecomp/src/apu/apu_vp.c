@@ -1078,9 +1078,9 @@ static int voice_resample(MCPXAPUState *d, uint16_t v, float samples[][2],
 /* RECOMP_APU_VOICE_DUMP=<voice hex>,<path>,<start s>,<secs>: one voice's
  * samples as the VP produced them (after pitch/resample) and after its
  * low-pass filter, float32 L R Lf Rf per sample, kept in RAM and written
- * once full; plus its filter/volume registers once a second. A debug aid
- * for noise in the output: it tells the title's own samples from what the
- * VP adds. Time counts this voice's frames (1500/s). */
+ * once full; plus source/post-filter peaks and the predicted contribution to
+ * mixbins 0/1 once per 1500 processed voice frames. Time counts this voice's
+ * frames, not wall-clock seconds. */
 static struct {
     int      on, voice, done;
     char     path[256];
@@ -1121,9 +1121,38 @@ static void vdump_frame(MCPXAPUState *d, uint16_t v, float post[][2], int fmode,
     if (!(++frames % 1500)) {
         uint32_t fca = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_FCA, 0xFFFFFFFF);
         uint32_t fcb = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_FCB, 0xFFFFFFFF);
-        fprintf(stderr, "[APU-VD] v%03X fmode %d fca %08X fcb %08X rate %.6f ea %.3f"
+        float src_peak[2] = { 0.0f, 0.0f }, post_peak[2] = { 0.0f, 0.0f };
+        float mix_peak[2] = { 0.0f, 0.0f };
+        int channels = voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT,
+                                      NV_PAVS_VOICE_CFG_FMT_STEREO) ? 2 : 1;
+        for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+            for (int ch = 0; ch < 2; ch++) {
+                float src = fabsf(s_vdump.pre[i][ch]);
+                float filtered = fabsf(post[i][ch]);
+                if (src > src_peak[ch]) src_peak[ch] = src;
+                if (filtered > post_peak[ch]) post_peak[ch] = filtered;
+            }
+        }
+        for (int b = 0; b < 8; b++) {
+            float hr = (v < MCPX_HW_MAX_3D_VOICES && b < 4)
+                     ? (float)(1 << d->vp.hrtf_headroom)
+                     : (float)(1 << d->vp.submix_headroom[bin[b]]);
+            float gain = ea * attenuate(vol[b]) / hr;
+            if (bin[b] > 1)
+                continue;
+            for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+                int ch = b % channels;
+                float mixed = fabsf(gain * post[i][ch]);
+                if (mixed > mix_peak[bin[b]])
+                    mix_peak[bin[b]] = mixed;
+            }
+        }
+        fprintf(stderr, "[APU-VD] v%03X src %.5f/%.5f post %.5f/%.5f mix01 %.5f/%.5f"
+                        " fmode %d fca %08X fcb %08X rate %.6f ea %.3f"
                         " vol %03X %03X %03X %03X %03X %03X %03X %03X bins %d %d %d %d %d %d %d %d"
-                        " fmt %08X ba %08X ebo %X cbo %X phys %08X\n", v, fmode, fca, fcb, rate, ea,
+                        " fmt %08X ba %08X ebo %X cbo %X phys %08X\n",
+                v, src_peak[0], src_peak[1], post_peak[0], post_peak[1],
+                mix_peak[0], mix_peak[1], fmode, fca, fcb, rate, ea,
                 vol[0], vol[1], vol[2], vol[3], vol[4], vol[5], vol[6], vol[7],
                 bin[0], bin[1], bin[2], bin[3], bin[4], bin[5], bin[6], bin[7],
                 voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF),

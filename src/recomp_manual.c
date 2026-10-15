@@ -41,6 +41,10 @@ void sub_000F0BB0(void)
 extern void sub_000A6720(void);
 extern void sub_000CB2E0(void);
 extern void sub_00090FD0(void);
+extern void sub_00457B80(void);
+extern void sub_0045AD10(void);
+extern void sub_0030E2B0(void);
+extern void sub_000F1A07(void);
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
@@ -84,10 +88,10 @@ recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
         return (recomp_func_t)sub_0049394F;
 
 
-    /* Handle Incremental Link Table (ILT) thunks (0x00011000 - 0x00017000) */
-    if (xbox_va >= 0x00011000 && xbox_va < 0x00017000) {
-        static recomp_func_t s_ilt_cache[0x6000];
-        static uint8_t s_ilt_checked[0x6000];
+    /* Handle Incremental Link Table (ILT) thunks (0x00011000 - 0x00020000) */
+    if (xbox_va >= 0x00011000 && xbox_va < 0x00020000) {
+        static recomp_func_t s_ilt_cache[0xF000];
+        static uint8_t s_ilt_checked[0xF000];
         uint32_t off = xbox_va - 0x00011000;
         if (s_ilt_checked[off])
             return s_ilt_cache[off];
@@ -99,7 +103,7 @@ recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
             uint32_t target = xbox_va + 5 + rel;
             recomp_func_t fn = recomp_lookup(target);
             if (!fn) fn = recomp_lookup_kernel(target);
-            if (!fn && target >= 0x00011000 && target < 0x00017000)
+            if (!fn && target >= 0x00011000 && target < 0x00020000)
                 fn = recomp_lookup_manual(target);
             s_ilt_cache[off] = fn;
             return fn;
@@ -141,8 +145,12 @@ void recomp_icall_not_code_log(uint32_t va)
         if (n != 1)
             return;
     }
-    fprintf(stderr, "[ICALL] target 0x%08X is not code -- skipped %llu time(s)\n",
-            va, (unsigned long long)hits[i]);
+    uint32_t caller = 0;
+    if (g_esp >= 0x00010000u && g_esp < 0x04000000u - 4) {
+        caller = MEM32(g_esp);
+    }
+    fprintf(stderr, "[ICALL] target 0x%08X is not code (caller %08X, esp %08X) -- skipped %llu time(s)\n",
+            va, caller, g_esp, (unsigned long long)hits[i]);
     fflush(stderr);
 }
 

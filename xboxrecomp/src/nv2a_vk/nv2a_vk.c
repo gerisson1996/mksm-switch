@@ -288,6 +288,7 @@ static uint32_t to_stored(uint32_t v, uint32_t p, uint32_t l)
 static VkSurf     s_surf[VK_MAX_SURF];
 static VkDepthBuf s_depth[VK_MAX_DEPTH];
 static VkSurf    *s_last;
+static VkSurf    *s_display_surf;
 
 static int         s_in_render;
 static VkSurf     *s_rt;
@@ -522,6 +523,7 @@ static VkSurf *surf_get(uint32_t va, uint32_t w, uint32_t h, uint32_t aa_sx, uin
     if (s->image) {
         if (s_rt == s) end_rendering(), s_rt = NULL;
         if (s_last == s) s_last = NULL;
+        if (s_display_surf == s) s_display_surf = NULL;
         garbage_add(s->image, s->view, s->mem);
     }
     memset(s, 0, sizeof *s);
@@ -604,8 +606,11 @@ static VkSurf *target(const Nv2aSurface *sf, uint32_t zeta_va, VkDepthBuf **dout
     s = surf_get(sf->color_va, w, h, sf->aa_sx ? sf->aa_sx : 1, sf->aa_sy ? sf->aa_sy : 1);
     if (s && zeta_va)
         *dout = depth_get(zeta_va, s->pw, s->ph);
-    if (s)
+    if (s) {
         s_last = s;
+        if (s->w >= 640 && s->h >= 400)
+            s_display_surf = s;
+    }
     return s;
 }
 
@@ -1876,12 +1881,19 @@ static int create_swapchain(void)
             ci.imageColorSpace = fmts[i].colorSpace;
             break;
         }
-    /* The game paces itself (vblank emulation): presenting must not block
-     * it. Horizon's immediate mode does not tear (nvnflinger composes). */
-    for (i = 0; i < nm; i++)
-        if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = modes[i];
-    for (i = 0; i < nm && mode == VK_PRESENT_MODE_FIFO_KHR; i++)
-        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) mode = modes[i];
+    /* By default on Nintendo Switch, lock to VK_PRESENT_MODE_FIFO_KHR (60 Hz VSync).
+     * This locks the frame rate to authentic 60 FPS, prevents 2x game speedup,
+     * and ensures FMV video and audio decoders are perfectly synchronized. */
+    const char *pm = getenv("MKSM_PRESENT_MODE");
+    if (pm && strcmp(pm, "immediate") == 0) {
+        for (i = 0; i < nm; i++)
+            if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = modes[i];
+    } else if (pm && strcmp(pm, "mailbox") == 0) {
+        for (i = 0; i < nm; i++)
+            if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) mode = modes[i];
+    } else {
+        mode = VK_PRESENT_MODE_FIFO_KHR;
+    }
     s_sc_extent = caps.currentExtent;
     if (s_sc_extent.width == 0xFFFFFFFFu) {
         s_sc_extent.width = 1280;
@@ -2707,6 +2719,7 @@ static struct {
 } s_pend;
 static int s_inst_on = -1, s_inst_alt;
 static uint32_t s_st_draws, s_st_calls, s_st_inst;
+static uint32_t s_frame_xform[3];
 
 static void pend_flush(void)
 {
@@ -2856,6 +2869,7 @@ static void vk_draw_raw(const Nv2aRawBatch *b)
                 s_inst_on ? "on" : "off", s_ubo_range, (unsigned)s_ubo_align);
     }
     s_st_draws++;
+    if (b->xform <= 2) s_frame_xform[b->xform]++;
     {
         int changed = regs_changed(r);
         if (pend_append(b, changed))
@@ -3113,6 +3127,7 @@ static void vk_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     begin_rendering(s, d);
     vkCmdClearAttachments(s_cb, nca, ca, 1, &rect);
     VT("  cleared\n");
+    s_drew_any = 1;
     s->dirty = 1;
     s->gen++;
 }
@@ -3175,11 +3190,11 @@ static void dump_surface(VkSurf *s, const char *path)
     vkFreeMemory(s_dev, mem, NULL);
 }
 
-static void vk_flip(void)
+static void vk_flip(uint32_t completed_color_va)
 {
     static int dump_every = -1;
     static char dump_prefix[256];
-    VkSurf *s = s_last;
+    VkSurf *s;
     uint32_t idx = 0;
     int have_image = 0;
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -3188,7 +3203,25 @@ static void vk_flip(void)
     if (!ready())
         return;
     pend_flush();
+    s = completed_color_va ? surf_find(completed_color_va) : NULL;
+    if (!s || s->w < 640 || s->h < 400) {
+        s = s_last;
+        if ((!s || s->w < 640 || s->h < 400) &&
+            s_display_surf && s_display_surf->image)
+            s = s_display_surf;
+    }
+    if (s && !s->image)
+        s = NULL;
     s_frame++;
+    {
+        static unsigned s_flip_diag_count = 0;
+        if (s_flip_diag_count++ < 15 || (s_flip_diag_count % 300) == 0) {
+            fprintf(stderr, "[VK-FLIP] frame=%u va=%08X surf=%p (%ux%u) img=%p | draws: x0=%u x1=%u x2=%u (inst=%u)\n",
+                    s_frame, completed_color_va, (void*)s, s ? s->w : 0, s ? s->h : 0, s ? (void*)s->image : NULL,
+                    s_frame_xform[0], s_frame_xform[1], s_frame_xform[2], s_st_inst);
+        }
+        s_frame_xform[0] = s_frame_xform[1] = s_frame_xform[2] = 0;
+    }
     if (s_inst_alt)
         s_inst_on = s_frame & 1;
     {
@@ -3296,7 +3329,7 @@ static void vk_flip(void)
             vkCmdPipelineBarrier(s_cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  0, 0, NULL, 0, NULL, 1, &b);
             vkCmdClearColorImage(s_cb, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rg);
-            if (s && s_drew_any) {
+            if (s && s->image) {
                 /* The logical aspect (16:9 for a widescreen title),
                  * letterboxed. Rows are top-first on both sides. */
                 float lw = (float)s->w / (float)s->aa_sx, lh = (float)s->h / (float)s->aa_sy;

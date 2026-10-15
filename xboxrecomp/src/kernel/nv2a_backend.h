@@ -161,7 +161,10 @@ typedef struct {
     void (*clear)(const Nv2aSurface *s, const Nv2aRenderState *rs,
                   uint32_t flags, uint32_t argb, uint32_t zstencil);
     void (*draw)(const Nv2aSurface *s, const Nv2aBatch *b);
-    void (*flip)(void);
+    /* Guest VA of the surface whose frame just completed. The executor
+     * advances the title's colour offset before the stall, so the current
+     * render target may already be the next back buffer. */
+    void (*flip)(uint32_t completed_color_va);
     /* Optional. When set, every batch goes here instead of draw(), before
      * any CPU transform, clipping or screen-space test. */
     void (*draw_raw)(const Nv2aRawBatch *b);

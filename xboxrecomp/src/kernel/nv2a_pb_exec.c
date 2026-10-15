@@ -219,8 +219,9 @@ static int surface_write_refused(uint32_t base, uint32_t bytes, const char *what
 #define NV097_SET_VERTEX_DATA4S_M         0x1980   /* + attr*8,  4 shorts */
 
 /* One immediate vertex, as this file packs it for the shared draw path:
- * position float4, diffuse D3DCOLOR, texcoord0 float2. */
-#define IMM_VERTEX_DWORDS 7
+ * position float4, diffuse D3DCOLOR, then a float4 for each attribute in
+ * imm_mask (texcoord0 always, plus whatever else the batch writes). */
+#define IMM_VERTEX_BASE_DWORDS 5
 
 #define NV097_CLEAR_COLOR_MASK            0xF0   /* R,G,B,A bits */
 
@@ -270,7 +271,9 @@ static struct {
      * array); attr_const_gen 0 = not initialised yet. */
     float      attr_const[16][4];
     uint32_t   attr_const_gen;
-    float      imm_tex[2];
+    uint16_t   imm_written;             /* attributes written since BEGIN */
+    uint16_t   imm_mask;                /* attributes each vertex carries */
+    uint32_t   imm_stride;              /* dwords per immediate vertex */
     uint32_t   imm_count;
     int        inline_active;
     uint32_t   draws, verts, nonzero_draws;
@@ -534,6 +537,8 @@ static int fetch_attr(const VertexAttr *a, uint32_t index, float out[4])
 #define NV097_SET_COMPOSITE_MATRIX_LAST  0x06BC
 #define NV097_SET_VIEWPORT_OFFSET_FIRST  0x0A20
 #define NV097_SET_VIEWPORT_OFFSET_LAST   0x0A2C
+#define NV097_SET_VIEWPORT_SCALE_FIRST   0x0AF0
+#define NV097_SET_VIEWPORT_SCALE_LAST    0x0AFC
 #define NV097_SET_TRANSFORM_EXEC_MODE    0x1E94
 #define NV_XFORM_MODE_PROGRAM            2   /* low two bits; 0 = fixed */
 
@@ -833,9 +838,14 @@ static const VpOut *vp_vertex(uint32_t index)
 /* Is this batch transformed by the fixed-function unit? */
 static int batch_is_ffp(void)
 {
+    static int inline_ffp = -1;
+    if (inline_ffp < 0) {
+        const char *e = getenv("RECOMP_INLINE_FFP");
+        inline_ffp = e && *e == '1';
+    }
     return s_gpu.composite_set
         && (s_gpu.xform_mode & 3) != NV_XFORM_MODE_PROGRAM
-        && !s_gpu.inline_active;
+        && (inline_ffp || !s_gpu.inline_active);
 }
 
 /* Attribute 0 as a screen position.
@@ -1265,6 +1275,11 @@ static uint32_t linear_twin(uint32_t fmt)
     case 0x06: return 0x12;                /* A8R8G8B8  -> LIN_A8R8G8B8  */
     case 0x07: return 0x1E;                /* X8R8G8B8  -> LIN_X8R8G8B8  */
     case 0x19: return 0x1F;                /* A8        -> LIN_A8        */
+    case 0x01: return 0x1B;                /* AY8       -> LIN_AY8       */
+    case 0x1A: return 0x20;                /* A8Y8      -> LIN_A8Y8      */
+    case 0x3A: return 0x3F;                /* A8B8G8R8  -> LIN_A8B8G8R8  */
+    case 0x3B: return 0x40;                /* B8G8R8A8  -> LIN_B8G8R8A8  */
+    case 0x3C: return 0x41;                /* R8G8B8A8  -> LIN_R8G8B8A8  */
     default:   return fmt;                 /* already linear, or unhandled */
     }
 }
@@ -1372,6 +1387,16 @@ static int sample_texture(const Texture *t, uint32_t u, uint32_t v, uint32_t *ar
     case 0x1F:                                      /* LIN_A8 */
         *argb = ((uint32_t)p[u] << 24) | 0x00FFFFFFu;
         return 1;
+    case 0x1B: {                                    /* LIN_AY8: Y in all four */
+        uint32_t t = p[u];
+        *argb = (t << 24) | (t << 16) | (t << 8) | t;
+        return 1;
+    }
+    case 0x20: {                                    /* LIN_A8Y8 (A8L8) */
+        uint32_t t = ((const uint16_t *)p)[u], l = t & 0xFFu;
+        *argb = ((t >> 8) << 24) | (l << 16) | (l << 8) | l;
+        return 1;
+    }
 
     /* 4:2:2 packed YUV, two texels per four bytes.
      *
@@ -3100,7 +3125,7 @@ static int cull_batch(uint32_t lo, uint32_t nv)
     int vp, off;
 
     if (s_cull.on < 0) {
-        s_cull.on = cull_env("RECOMP_CULL", 1);
+        s_cull.on = cull_env("RECOMP_CULL", 0);
         s_cull.check = cull_env("RECOMP_CULL_CHECK", 0);
         s_cull.stats = cull_env("RECOMP_DRAW_STATS", 0);
     }
@@ -3710,14 +3735,14 @@ out:
  *
  * The title's own table is saved and put back -- it has not stopped using it.
  *
- * ponytail: position, diffuse and texcoord0 only. That is what a 2D quad
- * carries and what this rasteriser samples; a second texcoord set or a normal
- * would need the D3D11 translator, not more slots here.
+ * Position, diffuse, and every other attribute the batch wrote: 2D quads,
+ * button HUDs, and composite passes arrive with DATA2F slot 0 and carry
+ * multiple texcoord sets.
  */
 static void draw_immediate(void)
 {
     VertexAttr saved[NV_VERTEX_ATTRS];
-    uint32_t i;
+    uint32_t i, a, off;
 
     if (s_gpu.imm_count < 3)
         return;
@@ -3731,17 +3756,23 @@ static void draw_immediate(void)
     s_gpu.attr[0].offset = 0;
     s_gpu.attr[3].type = 0; s_gpu.attr[3].size = 4;   /* diffuse D3DCOLOR */
     s_gpu.attr[3].offset = 16;
-    s_gpu.attr[9].type = 2; s_gpu.attr[9].size = 2;   /* texcoord0 float2 */
-    s_gpu.attr[9].offset = 20;
-    s_gpu.attr[0].stride = s_gpu.attr[3].stride = s_gpu.attr[9].stride =
-        IMM_VERTEX_DWORDS * 4;
+    s_gpu.attr[0].stride = s_gpu.attr[3].stride = s_gpu.imm_stride * 4;
+    off = IMM_VERTEX_BASE_DWORDS * 4;
+    for (a = 1; a < NV_VERTEX_ATTRS; a++) {
+        if (!(s_gpu.imm_mask & (1u << a)))
+            continue;
+        s_gpu.attr[a].type = 2; s_gpu.attr[a].size = 4;   /* float4 */
+        s_gpu.attr[a].offset = off;
+        s_gpu.attr[a].stride = s_gpu.imm_stride * 4;
+        off += 16;
+    }
 
     for (i = 0; i < s_gpu.imm_count && i < NV_MAX_INDICES; i++)
         s_gpu.idx[i] = i;
     s_gpu.idx_count = i;
 
     /* fetch_attr bounds-checks against inline_count dwords. */
-    s_gpu.inline_count = s_gpu.imm_count * IMM_VERTEX_DWORDS;
+    s_gpu.inline_count = s_gpu.imm_count * s_gpu.imm_stride;
     s_gpu.inline_active = 1;
     draw_primitive();
     s_gpu.inline_active = 0;
@@ -3754,13 +3785,32 @@ static void draw_immediate(void)
 /* A vertex is complete: append it in the layout draw_immediate describes. */
 static void imm_emit_vertex(void)
 {
-    uint32_t at = s_gpu.imm_count * IMM_VERTEX_DWORDS;
+    uint32_t at, a, o;
 
-    if (!s_gpu.prim || at + IMM_VERTEX_DWORDS > NV_MAX_INLINE)
+    if (!s_gpu.prim)
+        return;
+    if (s_gpu.imm_count == 0) {
+        /* The layout is fixed by the first vertex: what the batch set up
+         * before it. Attributes it never writes read their current value. */
+        attr_const_init();
+        s_gpu.imm_mask = (uint16_t)((s_gpu.imm_written | (1u << 9)) & ~((1u << 0) | (1u << 3)));
+        s_gpu.imm_stride = IMM_VERTEX_BASE_DWORDS;
+        for (a = 1; a < NV_VERTEX_ATTRS; a++)
+            if (s_gpu.imm_mask & (1u << a))
+                s_gpu.imm_stride += 4;
+    }
+    at = s_gpu.imm_count * s_gpu.imm_stride;
+    if (at + s_gpu.imm_stride > NV_MAX_INLINE)
         return;
     memcpy(&s_gpu.inline_buf[at],     s_gpu.imm_pos, 4 * sizeof(float));
     memcpy(&s_gpu.inline_buf[at + 4], &s_gpu.imm_diffuse, sizeof(uint32_t));
-    memcpy(&s_gpu.inline_buf[at + 5], s_gpu.imm_tex, 2 * sizeof(float));
+    o = at + IMM_VERTEX_BASE_DWORDS;
+    for (a = 1; a < NV_VERTEX_ATTRS; a++) {
+        if (!(s_gpu.imm_mask & (1u << a)))
+            continue;
+        memcpy(&s_gpu.inline_buf[o], s_gpu.attr_const[a], 4 * sizeof(float));
+        o += 4;
+    }
     s_gpu.imm_count++;
 }
 
@@ -3817,6 +3867,7 @@ static void attr_const_write(uint32_t method, uint32_t param)
         c[2] = 0.0f;
         c[3] = 1.0f;
     }
+    s_gpu.imm_written |= (uint16_t)(1u << ((c - s_gpu.attr_const[0]) / 4));
     if (++s_gpu.attr_const_gen == 0)
         s_gpu.attr_const_gen = 1;
 }
@@ -3834,6 +3885,16 @@ static int imm_vertex_method(uint32_t method, uint32_t param)
     if (method >= NV097_SET_VERTEX_DATA2F_M
             && method < NV097_SET_VERTEX_DATA4F_M + NV_VERTEX_ATTRS * 16)
         attr_const_write(method, param);
+    /* Attribute 0 through any SET_VERTEX_DATA* is the position, and its last
+     * component completes a vertex as SET_VERTEX4F's does (xemu's
+     * pgraph_finish_inline_buffer_vertex). */
+    if (method == NV097_SET_VERTEX_DATA2S || method == NV097_SET_VERTEX_DATA4UB
+            || method == NV097_SET_VERTEX_DATA2F_M + 4
+            || method == NV097_SET_VERTEX_DATA4S_M + 4) {
+        memcpy(s_gpu.imm_pos, s_gpu.attr_const[0], sizeof s_gpu.imm_pos);
+        imm_emit_vertex();
+        return 1;
+    }
     if (method >= NV097_SET_VERTEX_DATA2S
             && method < NV097_SET_VERTEX_DATA2S + NV_VERTEX_ATTRS * 4)
         return 1;
@@ -3859,10 +3920,7 @@ static int imm_vertex_method(uint32_t method, uint32_t param)
     }
     if (method >= NV097_SET_VERTEX_DATA2F_M
             && method < NV097_SET_VERTEX_DATA2F_M + NV_VERTEX_ATTRS * 8) {
-        uint32_t off = method - NV097_SET_VERTEX_DATA2F_M;
-        if (off / 8 == 9)                /* attribute 9 is texture coord 0 */
-            s_gpu.imm_tex[(off % 8) / 4] = v.f;
-        return 1;
+        return 1;                        /* attr_const has it */
     }
     if (method >= NV097_SET_VERTEX_DATA4F_M
             && method < NV097_SET_VERTEX_DATA4F_M + NV_VERTEX_ATTRS * 16) {
@@ -3872,8 +3930,6 @@ static int imm_vertex_method(uint32_t method, uint32_t param)
             s_gpu.imm_pos[c] = v.f;
             if (c == 3)
                 imm_emit_vertex();
-        } else if (attr == 9 && c < 2) {
-            s_gpu.imm_tex[c] = v.f;
         }
         return 1;
     }
@@ -4065,12 +4121,22 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     /* BACK_END_WRITE_SEMAPHORE_RELEASE. The title's pointer already names the
      * semaphore word; SET_SEMAPHORE_OFFSET is not added (in X-Men Legends it
      * held 0xFF000000 at times, which put the write outside guest memory). */
-    if (method == 0x1D70)
+    if (method == 0x1D70) {
         s_vtx_epoch++;
-    if (method == 0x1D70 && s_sem_va) {
-        uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
-        *(volatile uint32_t *)(mem + s_sem_va) = param;
-        return;
+        if (!s_sem_va) {
+            uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
+            uint32_t dev = *(volatile uint32_t *)(mem + 0x003F0C08u);
+            if (dev && dev < 0x04000000u) {
+                uint32_t ptr = *(volatile uint32_t *)(mem + dev + 0x30u);
+                if (ptr && ptr < 0x04000000u)
+                    s_sem_va = ptr;
+            }
+        }
+        if (s_sem_va) {
+            uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
+            *(volatile uint32_t *)(mem + s_sem_va) = param;
+            return;
+        }
     }
     /* The pattern object's SET_MONOCHROME_COLOR0 (0x0310) latches into
      * NV_PGRAPH_PATT_COLOR0 (0xFD400B10), and stock XDK D3D uses exactly that
@@ -4101,10 +4167,18 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             extern int xbox_bridge_KeSetEvent(uint32_t guest_va);
             xbox_bridge_KeSetEvent(0x003F29DCu);
         }
-        extern void xbox_set_irq_line(uint32_t vector, int level);
-        extern void xbox_Nv2aHoldInterrupts(int on);
         volatile uint32_t *nv = (volatile uint32_t *)
             ((uint8_t *)xbox_GetMemoryOffset() + 0xFD000000u);
+
+        /* On real NV2A hardware, if PGRAPH interrupt is not unmasked in PMC_INTR_EN_0,
+         * software traps are dropped and PGRAPH continues executing without stalling.
+         * MKSM uses KeSetEvent for NOP fences rather than PGRAPH ISR. */
+        if (!(nv[0x140 / 4] & 0x1000u)) {
+            return;
+        }
+
+        extern void xbox_set_irq_line(uint32_t vector, int level);
+        extern void xbox_Nv2aHoldInterrupts(int on);
         ULONGLONG give_up = GetTickCount64() + 200; /* 200 ms timeout */
 
         if (InterlockedCompareExchange(&s_trap_hooked, 0, 0)) {
@@ -4119,31 +4193,18 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
         nv[0x400100 / 4] |= 1;                         /* PGRAPH_INTR */
         nv[0x000100 / 4] |= 0x1000;                    /* PMC_INTR_0: PGRAPH */
         xbox_set_irq_line(3, 1);
-        /* Entered: the handler writes 0 over the sentinel first thing, then
-         * reads the status. Done: it writes 1 on the way out -- but with the
-         * status still set (the ack cannot clear RAM) the DPC calls it again
-         * straight away, so that 1 is brief. Spin rather than yield to see
-         * it, and fall back to a short grace period after entry, which is
-         * ample for it to have read what it needed. */
-        /* PGRAPH stalls until the driver has taken the trap; it never drops
-         * one. A trap given up on is a fence event nobody sets, and the title
-         * then sleeps forever (NFSU2's attract movie froze on its first
-         * frame that way, whenever the ISR was held off by a raised IRQL for
-         * more than a moment). So wait as long as it takes, and only say so
-         * when it is taking suspiciously long. */
         while (nv[0x400720 / 4] == 2) {
-            /* If PGRAPH interrupt is not enabled in PMC_INTR_EN_0, CPU will never service it */
             if (!(nv[0x140 / 4] & 0x1000u)) {
-                fprintf(stderr, "  [PB] NOP(%u) trap dropped (PGRAPH interrupt masked: PMC_INTR %08X EN %08X)\n",
-                        param, nv[0x100 / 4], nv[0x140 / 4]);
                 break;
             }
             nv[0x400100 / 4] |= 1;
             nv[0x000100 / 4] |= 0x1000;
             if (GetTickCount64() > give_up) {
-                fprintf(stderr, "  [PB] NOP(%u) trap timed out after 200ms "
-                        "(PMC_INTR %08X EN %08X)\n", param, nv[0x100 / 4],
-                        nv[0x140 / 4]);
+                static unsigned to_n;
+                if (to_n++ < 5) {
+                    fprintf(stderr, "  [PB] NOP(%u) trap timed out (PMC_INTR %08X EN %08X)\n",
+                            param, nv[0x100 / 4], nv[0x140 / 4]);
+                }
                 break;
             }
             Sleep(0);
@@ -4167,7 +4228,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             static unsigned handled_n, shown;
             int ok = nv[0x400720 / 4] != 2;
             handled_n += ok;
-            if (!ok || shown++ < 8 || (handled_n & 1023) == 0)
+            if (shown++ < 8 || (handled_n & 1023) == 0)
             {
                 extern int xbox_IrqlRaisedCount(void);
                 fprintf(stderr, "  [PB] NOP(%u) trap %s, %u handled so far "
@@ -4265,6 +4326,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             s_gpu.idx_count = 0;
             s_gpu.inline_count = 0;
             s_gpu.imm_count = 0;
+            s_gpu.imm_written = 0;
         } else {
             /* Three ways a batch can have arrived, and only one is in use at
              * a time: vertices completed by SET_VERTEX4F, a payload written
@@ -4409,8 +4471,13 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                 xbox_FramebufferWindowPresent(dma_resolve(done), pitch);
             }
         }
-        if (s_backend && s_backend->flip)
-            s_backend->flip();
+        if (s_backend && s_backend->flip) {
+            uint32_t done = s_gpu.drawn_offset ? s_gpu.drawn_offset
+                                               : s_gpu.color_offset;
+            s_backend->flip(dma_resolve(done));
+        }
+        s_gpu.drawn_offset = 0;
+        s_gpu.drawn_pitch = 0;
         if (pb_verbose()) {
             static unsigned n;
             if (n++ < 8) {
@@ -4468,10 +4535,26 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             s_gpu.composite_set = 1;
             break;
         }
+        /* SET_VIEWPORT_OFFSET / _SCALE. The GPU keeps these in the constant
+         * file, at c[59] and c[58] -- exactly where the D3D epilogue reads
+         * them -- so they are constants that happen to arrive by method.
+         * D3D8LTCG sends them only this way; dropped, every
+         * vertex program put its whole batch at the origin: no 3D anywhere,
+         * and black models/HUD everywhere (upstream 0e9cff9). */
         if (method >= NV097_SET_VIEWPORT_OFFSET_FIRST
          && method <= NV097_SET_VIEWPORT_OFFSET_LAST) {
-            memcpy(&s_gpu.vp_offset[(method - NV097_SET_VIEWPORT_OFFSET_FIRST) / 4],
-                   &param, 4);
+            uint32_t i = (method - NV097_SET_VIEWPORT_OFFSET_FIRST) / 4;
+            memcpy(&s_gpu.vp_offset[i], &param, 4);
+            memcpy(&s_vp.c[59][i], &param, 4);
+            s_vp.gen++;
+            s_vp.const_gen++;
+            break;
+        }
+        if (method >= NV097_SET_VIEWPORT_SCALE_FIRST
+         && method <= NV097_SET_VIEWPORT_SCALE_LAST) {
+            memcpy(&s_vp.c[58][(method - NV097_SET_VIEWPORT_SCALE_FIRST) / 4], &param, 4);
+            s_vp.gen++;
+            s_vp.const_gen++;
             break;
         }
         if (method == NV097_SET_TRANSFORM_EXEC_MODE) {

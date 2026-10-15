@@ -40,6 +40,7 @@ set(GAME_SOURCES
     src/main.c
     src/recomp_manual.c
     src/sub_00090FD0.c
+    src/sub_000F1A07.c
     src/sub_000A6720.c
     src/sub_000CB2E0.c
     src/sub_0030E2B0.c

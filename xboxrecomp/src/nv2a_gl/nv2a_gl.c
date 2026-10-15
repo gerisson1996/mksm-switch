@@ -2009,7 +2009,7 @@ static void dump_bmp(const char *path, const uint8_t *bgra, uint32_t w, uint32_t
     fclose(f);
 }
 
-static void gl_flip(void)
+static void gl_flip(uint32_t completed_color_va)
 {
     state_dirty();
     static int dump_every = -1;
@@ -2019,6 +2019,7 @@ static void gl_flip(void)
     int ww, wh;
     GlSurf *s = s_last;
 
+    (void)completed_color_va;
     if (!ready())
         return;
     s_frame++;
@@ -2433,8 +2434,9 @@ static void q_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     q_publish(size);
 }
 
-static void q_flip(void)
+static void q_flip(uint32_t completed_color_va)
 {
+    (void)completed_color_va;
     uint32_t nreg;
     size_t size;
     uint8_t *rec;

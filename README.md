@@ -69,3 +69,7 @@ No arquivo `sdmc:/switch/mksm/mksm_env.txt`:
 - `RECOMP_GL_SCALE=1.0`: Escala de resolução gráfica (ex: 1.0 = nativo 720p/1080p).
 - `RECOMP_QUIET=0`: Salva logs detalhados de inicialização em `mksm_log.txt`.
 - `RECOMP_VBLANK=1`: Sincroniza as taxas de quadro com a tela do console.
+- `RECOMP_AUDIO=1`: Ativa a saída de áudio via SDL2 no Switch.
+- `RECOMP_AUDIO_BLOCKS=12`: Tamanho da fila de áudio em blocos de 256 amostras (padrão no Switch; 8 no Linux).
+- `RECOMP_AUDIO_VOLUME=80`: Volume do master em porcentagem (0..100).
+- `RECOMP_NX_AUDIO_PRIO=1`: Mantém a prioridade da thread SDL de áudio em 0x2B para evitar gaps e crackle no audren. Use `0` para reverter ao comportamento antigo.

@@ -508,6 +508,14 @@ uint32_t xbox_mmio_read(uint32_t va, unsigned size)
     for (i = 0; i < g_mmio_count; i++)
         if (va >= g_mmio[i].lo && va < g_mmio[i].hi)
             return g_mmio[i].read(g_mmio[i].opaque, va - g_mmio[i].lo, size);
+    /* AC97 / MCPX bus master channel reset bits (offset 0x0B in each 16-byte channel):
+     * Hardware immediately self-clears the reset bit (AC97_RR = 0x02). If the guest
+     * compiler hoisted the read out of the loop (e.g. MKSM DirectSound sub_0040B721),
+     * reading 0x02 will cause an infinite loop in CPU registers. Always return bit 1 cleared. */
+    if (va >= 0xFEC00100u && va < 0xFEC00200u && (va & 0x0Fu) == 0x0Bu) {
+        p = (volatile uint8_t *)((uintptr_t)va + g_memory_offset);
+        return (uint32_t)((*p) & ~0x02u);
+    }
     p = (volatile uint8_t *)((uintptr_t)va + g_memory_offset);
     return size == 1 ? *p : size == 2 ? *(volatile uint16_t *)p
                                       : *(volatile uint32_t *)p;
@@ -523,6 +531,11 @@ void xbox_mmio_write(uint32_t va, uint32_t val, unsigned size)
             g_mmio[i].write(g_mmio[i].opaque, va - g_mmio[i].lo, val, size);
             return;
         }
+    /* AC97 / MCPX bus master channel reset bits (offset 0x0B in each 16-byte channel):
+     * Auto-clear bit 1 (AC97_RR = 0x02) so memory never retains the reset trigger bit. */
+    if (va >= 0xFEC00100u && va < 0xFEC00200u && (va & 0x0Fu) == 0x0Bu) {
+        val &= ~0x02u;
+    }
     p = (volatile uint8_t *)((uintptr_t)va + g_memory_offset);
     if (size == 1)
         *p = (uint8_t)val;
@@ -912,19 +925,34 @@ static void fence_mirrors_tick(void)
             uint32_t put =
                 *(volatile uint32_t *)((uintptr_t)(dev + g_fence_mirrors[i].put_off)
                                        + g_memory_offset);
-            if (*fence != put)
-                *fence = put;
+
+            static int s_exec = -1;
+            if (s_exec < 0)
+                s_exec = getenv("RECOMP_PB_EXEC") != NULL;
+
+            /* If the pushbuffer executor is running, the real GPU progress
+             * is written by the executor itself via method 0x1D70
+             * (NV097_BACK_END_WRITE_SEMAPHORE_RELEASE) and method 0x0310 (PATT).
+             * Overwriting *fence = put here makes D3D believe the GPU has
+             * finished commands that are still unexecuted, causing D3D to
+             * overwrite ring buffer space and vertex buffers (leading to
+             * mesh corruptions and "[PB] bad target ... resync"). */
+            if (!s_exec) {
+                if (*fence != put)
+                    *fence = put;
+                volatile uint32_t *patt = (volatile uint32_t *)
+                    ((uint8_t *)g_memory_offset + 0xFD400B10u);
+                *patt = (put & 0x1Fu) << 2;
+            }
 
             static uint32_t s_last_registered_sem;
             if (get_ptr && get_ptr != s_last_registered_sem) {
                 extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
                 nv2a_pb_set_semaphore_target(get_ptr);
                 s_last_registered_sem = get_ptr;
+                fprintf(stderr, "  [D3D] GPU semaphore registered at 0x%08X (initial val %u)\n",
+                        get_ptr, *fence);
             }
-
-            volatile uint32_t *patt = (volatile uint32_t *)
-                ((uint8_t *)g_memory_offset + 0xFD400B10u);
-            *patt = (put & 0x1Fu) << 2;
         }
     }
 }

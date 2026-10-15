@@ -198,9 +198,16 @@ int __real_SDL_SYS_SetThreadPriority(int prio);
 int __wrap_SDL_SYS_SetThreadPriority(int prio)
 {
     const char *e = getenv("RECOMP_NX_AUDIO_PRIO");
-    if (prio == 3 /* SDL_THREAD_PRIORITY_TIME_CRITICAL */ && !(e && *e == '0')) {
+    /* SDL's Switch port maps TIME_CRITICAL to a time-sliced value (59) that
+     * lets the renderer steal the CPU long enough for audren to run dry and
+     * then play the gap back as crackle. Overriding it to a sane high-priority
+     * value keeps the refill thread ahead of the device and avoids empty-wave
+     * gaps. The old behaviour is still available via RECOMP_NX_AUDIO_PRIO=0. */
+    if ((prio == 3 /* SDL_THREAD_PRIORITY_TIME_CRITICAL */ ||
+         prio == 2 /* SDL_THREAD_PRIORITY_HIGH */) && !(e && *e == '0')) {
         Result rc = svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2B);
-        fprintf(stderr, "  [AUDIO] SDL audio thread at priority 0x2B (rc 0x%X)\n", rc);
+        fprintf(stderr, "  [AUDIO] SDL audio thread priority override: %d -> 0x2B (rc 0x%X)\n",
+                prio, rc);
         if (R_SUCCEEDED(rc))
             return 0;
     }

@@ -462,14 +462,18 @@ void recomp_trace_esp(const char *name, const char *tag);
  * Memory access helpers
  * ================================================================ */
 
-/**
- * Translate an Xbox VA to an actual pointer.
- * Mask to 32-bit first: Xbox addresses are 32-bit and arithmetic
- * in the recompiled code can overflow. Without the mask, a 64-bit
- * uintptr_t cast preserves the overflow bits, landing us 4GB+ past
- * our mapping and causing access violations.
- */
+#if !defined(RECOMP_FOLD_TILED) && defined(__SWITCH__)
+#define RECOMP_FOLD_TILED 1
+#endif
+#if defined(RECOMP_FOLD_TILED) && RECOMP_FOLD_TILED
+static inline uint32_t recomp_fold_tiled(uint32_t a)
+{
+    return a - 0xF0000000u < 0x08000000u ? (0x80000000u | (a & 0x03FFFFFFu)) : a;
+}
+#define XBOX_PTR(addr) ((uintptr_t)recomp_fold_tiled((uint32_t)(addr)) + g_xbox_mem_offset)
+#else
 #define XBOX_PTR(addr) ((uintptr_t)(uint32_t)(addr) + g_xbox_mem_offset)
+#endif
 
 /* Guest RAM accesses are volatile by default: a poll loop that re-reads a
  * flag another thread (or the runtime) writes must not have its load hoisted.
