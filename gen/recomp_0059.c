@@ -2628,13 +2628,14 @@ loc_001D0057: ;
             g_eax = recomp_leaf_ld_eax(); g_ecx = recomp_leaf_ld_ecx(); g_edx = recomp_leaf_ld_edx(); g_ebx = recomp_leaf_ld_ebx(); g_esi = recomp_leaf_ld_esi(); g_edi = recomp_leaf_ld_edi(); g_esp = recomp_leaf_ld_esp();
             esp = esp + 4; /* caller pops ecx */
         } else {
-            /* Target is null / not code (e.g. State 0, 1, 3):
-             * Return 0 so it does NOT trigger sequence advance! */
-            static int s_state_null_cb_log = 0;
-            if (s_state_null_cb_log++ < 20) {
-                fprintf(stderr, "[FSM] sub_001CFF70 state=%u (table=%08X) has null callback -> eax=0 (do not advance)\n", edi, ebx);
+            /* Target is null / not code (e.g. State 0 boot/init):
+             * For State 0, advance to the next state defined in table entry (+4). */
+            uint32_t _next = MEM32(ebx + eax * 8 + 4);
+            if (edi == 0 && _next != 0) {
+                eax = _next;
+            } else {
+                eax = 0;
             }
-            eax = 0;
         }
     }
 

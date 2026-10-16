@@ -12045,6 +12045,7 @@ void sub_000CA4F0(void)
     uint32_t _fa = 0, _fb = 0;
     int32_t _fas = 0, _fbs = 0;
     (void)_fa; (void)_fb; (void)_fas; (void)_fbs;
+    static uint32_t s_init_loop_cnt = 0;
 
 loc_000CA4F0: ;
     _fb = (uint32_t)(8) & 0xFFFFFFFFu; _fbs = (int32_t)(int32_t)(_fb); /* sub source, before the write */
@@ -12079,6 +12080,12 @@ loc_000CA537: ;
     /* nop */
 
 loc_000CA540: ;
+    if (++s_init_loop_cnt > 30) {
+        fprintf(stderr, "[FSM-SAFE] sub_000CA4F0: loop limit reached, forcing state 1\n");
+        MEM32(0x5ADF18 + 0x688) = 1;
+        s_init_loop_cnt = 0;
+        goto loc_000CA56F;
+    }
     ecx = 0x5ADF18;
     PUSH32(esp, 0x000CA54Au); recomp_leaf_st_eax(g_eax); recomp_leaf_st_ecx(g_ecx); recomp_leaf_st_esp(g_esp); RECOMP_ABI_CALL(0x001CFAE0u, sub_001CFAE0); g_eax = recomp_leaf_ld_eax(); g_ecx = recomp_leaf_ld_ecx(); g_esp = recomp_leaf_ld_esp(); /* call 0x001CFAE0 */
 
@@ -12100,6 +12107,7 @@ loc_000CA56A: ;
     _fa = (uint32_t)(eax) & 0xFFFFFFFFu; _fb = (uint32_t)(1) & 0xFFFFFFFFu;
     _fas = (int32_t)(int32_t)(_fa); _fbs = (int32_t)(int32_t)(_fb); /* cmp eax, 1 (32-bit) */
     if (CMP_NE(_fa, _fb)) goto loc_000CA540; /* jne: not equal / not zero */
+    s_init_loop_cnt = 0;
 
 loc_000CA56F: ;
     _fb = (uint32_t)(8) & 0xFFFFFFFFu; _fbs = (int32_t)(int32_t)(_fb); /* add source, before the write */
@@ -14541,7 +14549,7 @@ loc_000CB7FA: ;
     MEM32(0x5CAB98) = ebx;
 
 loc_000CB800: ;
-    if (MEM32(0x5ADF18 + 0x688) >= 10) {
+    if (MEM32(0x5ADF18 + 0x688) >= 8) {
         MEM8(0x5AE5B0) = 0;
     }
     {
@@ -15254,7 +15262,7 @@ loc_000CBD9C: ;
     PUSH32(esp, 0x000CBDA1u); recomp_leaf_st_eax(g_eax); recomp_leaf_st_ecx(g_ecx); recomp_leaf_st_ebx(g_ebx); recomp_leaf_st_esi(g_esi); recomp_leaf_st_esp(g_esp); RECOMP_ABI_CALL(0x00011A7Du, sub_00011A7D); g_eax = recomp_leaf_ld_eax(); g_ecx = recomp_leaf_ld_ecx(); g_ebx = recomp_leaf_ld_ebx(); g_esi = recomp_leaf_ld_esi(); g_esp = recomp_leaf_ld_esp(); /* call 0x00011A7D */
 
 loc_000CBDA1: ;
-    if (MEM32(0x5ADF18 + 0x688) >= 10) {
+    if (MEM32(0x5ADF18 + 0x688) >= 8) {
         MEM8(0x5ACEEA) = 0;
     }
     _fa = (uint32_t)(MEM8(0x5ACEEA)) & 0xFFu; _fb = (uint32_t)(LO8(ebx)) & 0xFFu;
