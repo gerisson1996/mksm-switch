@@ -74,3 +74,8 @@ No arquivo `sdmc:/switch/mksm/mksm_env.txt`:
 - `RECOMP_AUDIO_VOLUME=80`: Volume do master em porcentagem (0..100).
 - `RECOMP_NX_AUDIO_PRIO=1`: Mantém a prioridade da thread SDL de áudio em 0x2B para evitar gaps e crackle no audren. Use `0` para reverter ao comportamento antigo.
 
+---
+
+## 🕹️ Gameplay & Atores
+- **Correção de visibilidade de personagens (`0x5AE5B0` e `0x5ACEEA`):** Garantido que o pipeline de desenho e skinning de atores (`sub_000CB780` e `sub_000CBC10`) não seja ignorado durante o estado de gameplay (`State 10`).
+- **Alinhamento de Stack em `sub_001703B0`:** Correção de desempilhamento de stack guest para evitar desvios no loop de atualização.
