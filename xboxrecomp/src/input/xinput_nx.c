@@ -62,6 +62,7 @@ static const HidNpadIdType s_src_id[NX_SRCS] = {
 static const char *const s_src_name[NX_SRCS] = { "handheld", "No1", "No2" };
 
 static PadState s_src[NX_SRCS];
+static PadState s_pad_any;
 static int      s_ready;
 static Mutex    s_lock;
 static int      s_positional;
@@ -76,7 +77,7 @@ static void nx_pad_init(void)
 
     s_positional = layout && strcmp(layout, "position") == 0;
     s_rotate = !(rotate && strcmp(rotate, "0") == 0);
-    padConfigureInput(NX_PADS, HidNpadStyleSet_NpadStandard);
+    padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     if (joycon && strcmp(joycon, "single") == 0) {
         hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
         hidSetNpadJoyAssignmentModeSingleByDefault(HidNpadIdType_No1);
@@ -84,6 +85,7 @@ static void nx_pad_init(void)
     }
     for (i = 0; i < NX_SRCS; i++)
         padInitialize(&s_src[i], s_src_id[i]);
+    padInitializeAny(&s_pad_any);
     s_ready = 1;
 }
 
@@ -95,9 +97,11 @@ static void nx_assign(unsigned mask[NX_PADS])
     unsigned on = 0;
     int i, p;
 
-    for (i = 0; i < NX_SRCS; i++)
-        if (hidGetNpadStyleSet(s_src_id[i]))
+    for (i = 0; i < NX_SRCS; i++) {
+        padUpdate(&s_src[i]);
+        if (padIsConnected(&s_src[i]) || padGetStyleSet(&s_src[i]))
             on |= 1u << i;
+    }
     if (on & 4u) {                      /* No2 present: the usual split */
         mask[0] = on & 3u;
         mask[1] = 4u;
@@ -108,8 +112,12 @@ static void nx_assign(unsigned mask[NX_PADS])
     } else if ((on & 3u) == 3u) {       /* handheld and No1: two players */
         mask[0] = 1u;
         mask[1] = 2u;
-    } else {
+    } else if (on != 0) {
         mask[0] = on;
+        mask[1] = 0;
+    } else {
+        /* Default: assign Player 1 to Handheld and No1 slot */
+        mask[0] = 1u | 2u;
         mask[1] = 0;
     }
     if (mask[0] != shown[0] || mask[1] != shown[1]) {
@@ -217,9 +225,16 @@ int xbox_nx_pad_read(unsigned port, uint16_t *digital, uint8_t analog[8],
         if (stick_mag(sl) > stick_mag(l)) l = sl;
         if (stick_mag(sr) > stick_mag(r)) r = sr;
     }
+    /* Fallback for Player 1: if no input was found from slots, check any connected pad */
+    if (port == 0 && b == 0 && l.x == 0 && l.y == 0 && r.x == 0 && r.y == 0) {
+        padUpdate(&s_pad_any);
+        b = padGetButtons(&s_pad_any);
+        l = padGetStickPos(&s_pad_any, 0);
+        r = padGetStickPos(&s_pad_any, 1);
+    }
     mutexUnlock(&s_lock);
 
-    if (!mask[port])
+    if (port != 0 && !mask[port])
         return 0;
 
     *digital = 0;
@@ -301,9 +316,9 @@ typedef struct {
     HidVibrationDeviceHandle handles[2];
 } NxRumbleTarget;
 
-static int nx_rumble_refresh(NxRumbleTarget *t, int active)
+static int nx_rumble_refresh(NxRumbleTarget *t, u32 pad_style)
 {
-    u32 styles = active ? hidGetNpadStyleSet(t->id) : 0;
+    u32 styles = pad_style;
     u32 style = 0;
     s32 count = 2;
 
@@ -368,7 +383,7 @@ void xbox_nx_pad_rumble(unsigned port, uint16_t left, uint16_t right)
         int c;
         if (!(mask[port] & (1u << i)))
             continue;
-        c = nx_rumble_refresh(&targets[i], 1);
+        c = nx_rumble_refresh(&targets[i], padGetStyleSet(&s_src[i]));
         for (k = 0; k < c; k++) {
             handles[n] = targets[i].handles[k];
             values[n] = v;
