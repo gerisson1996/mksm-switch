@@ -77,6 +77,7 @@ static void nx_pad_init(void)
 
     s_positional = layout && strcmp(layout, "position") == 0;
     s_rotate = !(rotate && strcmp(rotate, "0") == 0);
+    hidInitialize();
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     if (joycon && strcmp(joycon, "single") == 0) {
         hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);

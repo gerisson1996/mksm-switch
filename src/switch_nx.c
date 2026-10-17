@@ -1080,6 +1080,7 @@ static void clk_apply(void)
 void switch_boot(void)
 {
     s_t0 = armGetSystemTick();
+    hidInitialize();
     socketInitializeDefault();
     s_nxlink = nxlinkStdio();
     if (s_nxlink < 0 && !log_open())
@@ -1140,6 +1141,7 @@ void switch_shutdown(void)
     clk_restore();
     log_flush(1);
     socketExit();
+    hidExit();
 }
 
 /* libnx calls this for any CPU exception in the application. Print what we
