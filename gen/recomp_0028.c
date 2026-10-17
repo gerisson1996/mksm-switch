@@ -655,6 +655,7 @@ loc_000C5910: ;
 
 loc_000C591C: ;
     MEM8(0x5AE5B0) = LO8(eax);
+    fprintf(stderr, "[ACTOR_GATE] LOCKED (0x5AE5B0=1)\n");
 
 loc_000C5921: ;
     esp += 4; { recomp_leaf_st_eax(g_eax); recomp_leaf_st_ecx(g_ecx); recomp_leaf_st_esp(g_esp); return; } /* ret */
@@ -685,6 +686,7 @@ loc_000C5930: ;
 
 loc_000C5939: ;
     MEM8(0x5AE5B0) = 0;
+    fprintf(stderr, "[ACTOR_GATE] UNLOCKED (0x5AE5B0=0)\n");
 
 loc_000C5940: ;
     esp += 4; { recomp_leaf_st_eax(g_eax); recomp_leaf_st_esp(g_esp); return; } /* ret */
@@ -14549,14 +14551,11 @@ loc_000CB7FA: ;
     MEM32(0x5CAB98) = ebx;
 
 loc_000CB800: ;
-    if (MEM32(0x5ADF18 + 0x688) >= 8) {
-        MEM8(0x5AE5B0) = 0;
-    }
     {
         static uint32_t s_actor_dbg = 0;
         if (++s_actor_dbg % 120 == 1) {
-            fprintf(stderr, "[ACTOR_RENDER] state=%u 5AE5B0=%u 5ACEEA=%u\n",
-                    MEM32(0x5ADF18 + 0x688), (unsigned)MEM8(0x5AE5B0), (unsigned)MEM8(0x5ACEEA));
+            fprintf(stderr, "[ACTOR_RENDER] state=%u 5AE5B0=%u 5ACEEA=%u world=%08X\n",
+                    MEM32(0x5ADF18 + 0x688), (unsigned)MEM8(0x5AE5B0), (unsigned)MEM8(0x5ACEEA), MEM32(0x5143C0));
         }
     }
     _fa = (uint32_t)(MEM8(0x5AE5B0)) & 0xFFu; _fb = (uint32_t)(1) & 0xFFu;
@@ -15262,9 +15261,6 @@ loc_000CBD9C: ;
     PUSH32(esp, 0x000CBDA1u); recomp_leaf_st_eax(g_eax); recomp_leaf_st_ecx(g_ecx); recomp_leaf_st_ebx(g_ebx); recomp_leaf_st_esi(g_esi); recomp_leaf_st_esp(g_esp); RECOMP_ABI_CALL(0x00011A7Du, sub_00011A7D); g_eax = recomp_leaf_ld_eax(); g_ecx = recomp_leaf_ld_ecx(); g_ebx = recomp_leaf_ld_ebx(); g_esi = recomp_leaf_ld_esi(); g_esp = recomp_leaf_ld_esp(); /* call 0x00011A7D */
 
 loc_000CBDA1: ;
-    if (MEM32(0x5ADF18 + 0x688) >= 8) {
-        MEM8(0x5ACEEA) = 0;
-    }
     _fa = (uint32_t)(MEM8(0x5ACEEA)) & 0xFFu; _fb = (uint32_t)(LO8(ebx)) & 0xFFu;
     _fas = (int32_t)(int8_t)(_fa); _fbs = (int32_t)(int8_t)(_fb); /* cmp MEM8(0x5ACEEA), LO8(ebx) (8-bit) */
     if (CMP_NE(_fa, _fb)) goto loc_000CBDFD; /* jne: not equal / not zero */

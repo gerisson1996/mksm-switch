@@ -148,7 +148,27 @@ static void install_crash_reporter(void)
     AddVectoredExceptionHandler(1, veh_handler);
 }
 #elif defined(__SWITCH__)
-static void install_crash_reporter(void) {}
+#include <signal.h>
+#include <unistd.h>
+
+static void switch_crash_handler(int sig)
+{
+    fprintf(stderr, "\n==================== [SWITCH CRASH] ====================\n");
+    fprintf(stderr, "Received signal %d\n", sig);
+    print_guest_state();
+    fflush(stderr);
+    fsync(fileno(stderr));
+    signal(sig, SIG_DFL);
+}
+
+static void install_crash_reporter(void)
+{
+    signal(SIGSEGV, switch_crash_handler);
+    signal(SIGBUS,  switch_crash_handler);
+    signal(SIGILL,  switch_crash_handler);
+    signal(SIGABRT, switch_crash_handler);
+    signal(SIGFPE,  switch_crash_handler);
+}
 #else
 #include <execinfo.h>
 
